@@ -34,11 +34,24 @@ bun run dev:server
 PORT=4000 bun run dev:server
 ```
 
+服务端通过链式路由保留 RPC 类型，并从 `@freecode/server` 导出 `AppType`。CLI 的 `apps/cli/src/client.ts` 使用 `import type` 导入该类型，通过 `hc<AppType>()` 创建请求客户端：
+
+```ts
+import { client } from "./client";
+
+const response = await client.health.$get();
+const data = await response.json(); // 自动推导为 { status: string }
+```
+
+客户端默认连接 `http://localhost:3000`；修改服务端端口时，同步修改 `client.ts` 中的地址。
+
 在另一个终端打开欢迎屏幕：
 
 ```bash
 bun run dev:cli
 ```
+
+首页会使用 RPC 客户端请求 `/health`，显示 `Server: ok`；服务未启动或请求失败时显示 `Server: unavailable`。最小调用示例位于 `apps/cli/src/features/home/HomeScreen.tsx`。
 
 CLI 开发模式使用 `bun --hot`，保存已导入的 `.ts`、`.tsx` 文件后自动更新界面，无需手动重启。按 `Q`、`Esc` 或 `Ctrl+C` 退出并恢复终端。
 
