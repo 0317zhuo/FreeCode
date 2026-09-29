@@ -1,0 +1,17 @@
+{
+  "name": "@freecode/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "bun run --bun tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "4.13.10"
+  },
+  "devDependencies": {
+    "@hono/cli": "0.2.0-next.9"
+  }
+}

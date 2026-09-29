@@ -1,0 +1,28 @@
+{
+  "name": "freecode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:server": "bun run --cwd apps/server dev",
+    "dev:cli": "bun run --cwd apps/cli dev",
+    "start:server": "bun run --cwd apps/server start",
+    "start:cli": "bun run --cwd apps/cli start",
+    "typecheck": "bun run --workspaces --sequential typecheck",
+    "lint": "bun run --bun biome check .",
+    "format": "bun run --bun biome format --write .",
+    "check": "bun run lint && bun run typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  }
+}

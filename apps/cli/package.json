@@ -1,0 +1,19 @@
+{
+  "name": "@freecode/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot --no-clear-screen src/index.tsx",
+    "start": "bun src/index.tsx",
+    "typecheck": "bun run --bun tsc --noEmit"
+  },
+  "dependencies": {
+    "@opentui/core": "0.5.12",
+    "@opentui/react": "0.5.12",
+    "react": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0"
+  }
+}
