@@ -1,6 +1,6 @@
 import { type CliRenderer, createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { App } from "./App";
+import { App } from "./app/App";
 
 // Bun --hot 会保留 globalThis；重载前卸载旧组件并释放终端资源。
 const runtime = globalThis as typeof globalThis & {
@@ -15,7 +15,7 @@ runtime.freecodeCli?.renderer.destroy();
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
-  useMouse: false,
+  useMouse: true,
   onDestroy: () => {
     delete runtime.freecodeCli;
   },

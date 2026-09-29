@@ -5,7 +5,7 @@
 本项目是 Bun workspaces 管理的 TypeScript monorepo，可运行应用位于 `apps/`：
 
 - `apps/server/src/app.ts` 定义 Hono 路由；`src/index.ts` 启动 HTTP 服务。保持应用定义与监听入口分离。
-- `apps/cli/src/App.tsx` 定义 OpenTUI React 界面；`src/index.tsx` 管理渲染器、热重载与退出清理。
+- `apps/cli/src/index.tsx` 管理渲染器、热重载与退出清理；CLI 源码按应用层和功能组织：`src/app/App.tsx` 放全局应用行为，`src/features/<feature>/` 放功能界面及其专属组件。仅在多个功能实际复用时才抽取共享目录。
 - 根目录的 `tsconfig.base.json`、`biome.json`、`.editorconfig` 提供公共规则；`bun.lock` 是唯一锁文件。
 
 当前没有共享包、独立测试目录或静态资源目录；仅在实际需要时新增。
