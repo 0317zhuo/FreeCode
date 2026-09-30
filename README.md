@@ -27,12 +27,32 @@ bun run dev:server
 | --- | --- |
 | `GET /` | `Hello from Hono + Bun!` |
 | `GET /health` | `{"status":"ok"}` |
+| `GET /ai` | 使用固定测试提示词的 AI SDK 标准 SSE 流 |
+| `POST /ai` | 接收 `{ "prompt": "..." }` 并返回 AI SDK 标准 SSE 流 |
 
 可以复制 `apps/server/.env.example` 为 `apps/server/.env` 修改端口，Bun 会自动加载该文件；也可以通过环境变量指定端口：
 
 ```bash
 PORT=4000 bun run dev:server
 ```
+
+测试 AI SDK + DeepSeek 时，复制 `apps/server/.env.example` 为 `apps/server/.env`，填写
+`DEEPSEEK_API_KEY`，然后运行 `bun run dev:server`。使用 CLI 的“大模型测试”页面查看逐步生成的文本，
+也可以运行 `curl -N http://localhost:3000/ai` 查看固定提示词的原始 SSE 事件。
+聊天页面使用 AI SDK React 的 `useCompletion`，通过 Hono RPC 客户端向 `POST /ai` 发送首页提交的提示词；
+请求体经 Zod 校验后传给 `streamText`，逐步返回模型文本。也可以这样手动调用动态端点：
+
+```bash
+curl -N -X POST http://localhost:3000/ai \
+  -H 'Content-Type: application/json' \
+  --data '{"prompt":"请用中文写一首小诗。"}'
+```
+
+`GET /ai` 保留给“大模型测试”页面，使用固定提示词；两个端点都调用 `deepseek-flash`，关闭思考模式，
+通过 `toUIMessageStream({ stream: result.stream })` 和 `createUIMessageStreamResponse` 返回 SSE。
+每次请求都会调用 DeepSeek API。修改密钥后重启服务。
+缺少密钥时返回 HTTP 500 和配置提示；流中的鉴权失败、余额不足、限流及其他生成错误
+通过错误事件传给客户端，服务端只记录错误名称和状态码。生成总超时为 60 秒，客户端断开会中止生成。
 
 服务端通过链式路由保留 RPC 类型，并从 `@freecode/server` 导出 `AppType`。CLI 的 `apps/cli/src/client.ts` 使用 `import type` 导入该类型，通过 `hc<AppType>()` 创建请求客户端：
 
@@ -51,11 +71,23 @@ const data = await response.json(); // 自动推导为 { status: string }
 bun run dev:cli
 ```
 
-首页会使用 RPC 客户端请求 `/health`，显示 `Server: ok`；服务未启动或请求失败时显示 `Server: unavailable`。最小调用示例位于 `apps/cli/src/features/home/HomeScreen.tsx`。
+首页通过 `useServerStatus` hook 使用 RPC 客户端请求 `/health`，显示 `Server: ok`；服务未启动或请求失败时显示 `Server: unavailable`。
 
-CLI 开发模式使用 `bun --hot`，保存已导入的 `.ts`、`.tsx` 文件后自动更新界面，无需手动重启。按 `Q`、`Esc` 或 `Ctrl+C` 退出并恢复终端。
+在首页输入非空提示词后按无修饰键的 `Enter` 进入聊天页；`Shift+Enter` 可在提示词中换行。提示词通过 Zod 校验并去除首尾空白，带其他修饰键的 Enter 不会提交。
+聊天页在收到首页的提示词后自动请求模型，逐步显示回复；请求失败时保留已收到的内容并显示错误，离开聊天页会取消请求。
+点击“返回首页”可离开聊天页；首页其他导航入口不会进入聊天页。
 
-`src/index.tsx` 在 `globalThis` 中保存终端渲染器和 React root。热重载时先卸载旧组件树、清理 effects，并销毁旧渲染器，再创建新的渲染器和 React root。这样可以适配 Bun 重新加载模块后的 React 上下文，避免重复接管终端或累积键盘监听器。`--no-clear-screen` 防止 Bun 自行清屏干扰终端渲染。退出时清除缓存。这是 Bun 的进程内热重载，未集成 React Fast Refresh；每次重载都会重新挂载组件，React 局部状态会重置。
+点击首页的“大模型测试”进入测试页面，页面会自动请求服务端 `/ai`，显示加载提示，
+随后随流更新模型返回的文本；请求或流读取失败时保留已收到的文本并显示错误。
+页面会识别超时、中断、无效流数据和空输出。内容支持方向键和鼠标滚轮滚动，
+点击“返回首页”即可离开。每次进入页面都会发起一次新的生成请求，离开页面会取消客户端请求。
+使用前请先配置服务端 `DEEPSEEK_API_KEY` 并运行 `bun run dev:server`。
+
+大模型测试功能的请求、流解析、内容和错误状态、取消逻辑集中在 `useAiTest` hook 中；`AiTestScreen` 负责界面渲染和返回首页交互。
+
+CLI 开发模式使用 `bun --watch`，保存已导入的 `.ts`、`.tsx` 文件后自动重启并回到首页，无需手动重启。重新启动进程会刷新依赖解析和终端状态，避免 `--hot` 在安装新依赖后继续使用旧的解析结果。输入框未聚焦时按 `Q`，或按 `Esc`、`Ctrl+C` 可退出并恢复终端。修改依赖或 `package.json` 后，请完成 `bun install` 并重新运行 `bun run dev:cli`。
+
+`src/index.tsx` 负责创建终端渲染器和 React root。开发模式每次保存都会重新启动进程，React 局部状态会重置。`--no-clear-screen` 防止 Bun 自行清屏干扰终端渲染。
 
 Bun 的开发监听会保留进程，因此键盘退出动作会先卸载 React、调用 `renderer.destroy()` 完成终端清理，再结束进程。组件通过 `onQuit` 回调请求退出，资源清理由入口统一负责。
 

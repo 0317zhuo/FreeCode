@@ -1,28 +1,15 @@
-import { useEffect, useState } from "react";
-import { client } from "../../client";
 import { AsciiTitle } from "./components/AsciiTitle";
 import { PromptTextarea } from "./components/PromptTextarea";
+import { useServerStatus } from "./useServerStatus";
 
-export function HomeScreen({ onNavigate }: { onNavigate: (path: "/about" | "/settings") => void }) {
-  const [serverStatus, setServerStatus] = useState("Server: checking...");
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    async function checkHealth() {
-      try {
-        const response = await client.health.$get({}, { init: { signal: controller.signal } });
-        if (!response.ok) throw new Error("Health check failed");
-        const data = await response.json();
-        setServerStatus(`Server: ${data.status}`);
-      } catch {
-        if (!controller.signal.aborted) setServerStatus("Server: unavailable");
-      }
-    }
-
-    void checkHealth();
-    return () => controller.abort();
-  }, []);
+export function HomeScreen({
+  onNavigate,
+  onSubmitPrompt,
+}: {
+  onNavigate: (path: "/about" | "/settings" | "/ai") => void;
+  onSubmitPrompt: (prompt: string) => void;
+}) {
+  const serverStatus = useServerStatus();
 
   return (
     <box
@@ -36,9 +23,13 @@ export function HomeScreen({ onNavigate }: { onNavigate: (path: "/about" | "/set
     >
       <box width="100%" maxWidth={110} flexDirection="column" alignItems="center" gap={3}>
         <AsciiTitle />
-        <PromptTextarea />
-        <text>{serverStatus} · Click a page to open it.</text>
+        <PromptTextarea onSubmit={onSubmitPrompt} />
+        <text>Server: {serverStatus} · Click a page to open it.</text>
         <box flexDirection="row" gap={2}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI boxes use mouse handlers for terminal interactions. */}
+          <box border paddingX={2} onMouseDown={() => onNavigate("/ai")}>
+            <text>大模型测试</text>
+          </box>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI boxes use mouse handlers for terminal interactions. */}
           <box border paddingX={2} onMouseDown={() => onNavigate("/about")}>
             <text>About</text>
