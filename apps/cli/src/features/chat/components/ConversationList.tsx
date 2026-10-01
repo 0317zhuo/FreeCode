@@ -1,5 +1,10 @@
 /** 聊天记录区：按消息逐块渲染文本、推理、工具与来源，并跟随最新内容滚动。 */
-import { type ScrollBoxRenderable, SyntaxStyle } from "@opentui/core";
+import {
+  CodeRenderable,
+  type MarkdownOptions,
+  type ScrollBoxRenderable,
+  SyntaxStyle,
+} from "@opentui/core";
 import { type ChatStatus, isReasoningUIPart, isTextUIPart, isToolUIPart, type UIMessage } from "ai";
 import type { RefObject } from "react";
 import { theme } from "../../../lib/theme";
@@ -15,6 +20,20 @@ const markdownStyle = SyntaxStyle.fromStyles({
   number: { fg: theme.foreground },
 });
 
+/** 历史内容先显示正文，再异步高亮，避免等待解析器时出现空白。 */
+const renderMarkdownNode: NonNullable<MarkdownOptions["renderNode"]> = (_token, context) => {
+  const renderable = context.defaultRender();
+  if (!renderable) return renderable;
+  const nodes = [renderable];
+  while (nodes.length) {
+    const node = nodes.pop();
+    if (!node) continue;
+    if (node instanceof CodeRenderable) node.drawUnstyledText = true;
+    nodes.push(...node.getChildren());
+  }
+  return renderable;
+};
+
 export function ConversationList({
   messages,
   status,
@@ -25,6 +44,7 @@ export function ConversationList({
   expandedIds,
   scrollRef,
   onToggleDetail,
+  messageErrors = {},
 }: {
   messages: UIMessage[];
   status: ChatStatus;
@@ -35,6 +55,7 @@ export function ConversationList({
   expandedIds: Set<string>;
   scrollRef: RefObject<ScrollBoxRenderable | null>;
   onToggleDetail: (id: string) => void;
+  messageErrors?: Record<string, string | undefined>;
 }) {
   const busy = isChatBusy(status);
   const lastMessage = messages.at(-1);
@@ -67,6 +88,7 @@ export function ConversationList({
                   return display.markdown ? (
                     <markdown
                       key={partId}
+                      renderNode={renderMarkdownNode}
                       content={part.text}
                       syntaxStyle={markdownStyle}
                       streaming={busy && isLastAssistant && part.state !== "done"}
@@ -125,9 +147,16 @@ export function ConversationList({
                   </text>
                 );
               })}
-              {isLastAssistant && !hasVisiblePart && activity.phase === "idle" && !error && (
-                <text fg={theme.muted}>模型没有返回可显示内容。</text>
+              {messageErrors[message.id] && (
+                <text fg={theme.error}>{messageErrors[message.id]}</text>
               )}
+              {isLastAssistant &&
+                !hasVisiblePart &&
+                activity.phase === "idle" &&
+                !error &&
+                !messageErrors[message.id] && (
+                  <text fg={theme.muted}>模型没有返回可显示内容。</text>
+                )}
             </box>
           );
         })}

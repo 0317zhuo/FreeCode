@@ -1,7 +1,9 @@
+import { useKeyboard } from "@opentui/react";
 import { theme } from "../../lib/theme";
 import { AsciiTitle } from "./components/AsciiTitle";
 import { PromptTextarea } from "./components/PromptTextarea";
 import { type ServerStatus, useServerStatus } from "./hooks/useServerStatus";
+import { useStartConversation } from "./hooks/useStartConversation";
 
 const serverStatusLabels: Record<ServerStatus, string> = {
   checking: "checking...",
@@ -9,8 +11,18 @@ const serverStatusLabels: Record<ServerStatus, string> = {
   unavailable: "unavailable",
 };
 
-export function HomeScreen({ onSubmitPrompt }: { onSubmitPrompt: (prompt: string) => void }) {
+export function HomeScreen({
+  onConversationCreated,
+  onHistory,
+}: {
+  onConversationCreated: (id: string, prompt: string) => void;
+  onHistory?: () => void;
+}) {
   const serverStatus = useServerStatus();
+  const { startConversation, waiting, error } = useStartConversation(onConversationCreated);
+  useKeyboard((key) => {
+    if (key.name === "f2") onHistory?.();
+  });
 
   return (
     <box
@@ -24,8 +36,14 @@ export function HomeScreen({ onSubmitPrompt }: { onSubmitPrompt: (prompt: string
     >
       <box width="100%" maxWidth={110} flexDirection="column" alignItems="center" gap={3}>
         <AsciiTitle />
-        <PromptTextarea onSubmit={onSubmitPrompt} />
+        <PromptTextarea waiting={waiting} onSubmit={(prompt) => void startConversation(prompt)} />
+        {waiting && <text fg={theme.muted}>正在创建对话…</text>}
+        {error && <text fg={theme.error}>{error.message}</text>}
         <text>Server: {serverStatusLabels[serverStatus]}</text>
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI 鼠标事件。 */}
+        <box onMouseDown={onHistory}>
+          <text fg={theme.muted}>历史对话 · F2</text>
+        </box>
       </box>
     </box>
   );

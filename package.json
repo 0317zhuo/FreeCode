@@ -11,12 +11,16 @@
     "apps/*"
   ],
   "scripts": {
+    "db:up": "bun scripts/database.ts up",
+    "db:down": "bun scripts/database.ts down",
+    "db:generate": "bun run --cwd apps/server db:generate",
+    "db:migrate": "bun run --cwd apps/server db:migrate",
     "dev:server": "bun run --cwd apps/server dev",
     "dev:cli": "bun run --cwd apps/cli dev",
     "start:server": "bun run --cwd apps/server start",
     "start:cli": "bun run --cwd apps/cli start",
     "typecheck": "bun run --workspaces --sequential typecheck",
-    "test": "bun test",
+    "test": "bun scripts/test.ts",
     "lint": "bun run --bun biome check .",
     "format": "bun run --bun biome format --write .",
     "check": "bun run lint && bun run typecheck && bun run test"

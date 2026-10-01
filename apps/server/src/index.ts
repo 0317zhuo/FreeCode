@@ -1,4 +1,6 @@
 import app from "./app";
+import { closeDb } from "./db/client";
+import { cancelActiveGenerations } from "./features/ai/generationRuntime";
 import { aiRoutePath } from "./routes/ai";
 
 const server = Bun.serve({
@@ -11,3 +13,21 @@ const server = Bun.serve({
 });
 
 console.log(`服务已启动：${server.url}`);
+
+// 入口统一管理退出，热重载时替换旧监听器。
+const shared = globalThis as typeof globalThis & { freecodeShutdown?: () => Promise<void> };
+if (shared.freecodeShutdown) {
+  process.off("SIGINT", shared.freecodeShutdown);
+  process.off("SIGTERM", shared.freecodeShutdown);
+}
+let shuttingDown = false;
+shared.freecodeShutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  server.stop();
+  await cancelActiveGenerations();
+  await closeDb();
+  process.exit(0);
+};
+process.on("SIGINT", shared.freecodeShutdown);
+process.on("SIGTERM", shared.freecodeShutdown);

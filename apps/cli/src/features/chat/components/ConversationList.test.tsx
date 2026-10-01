@@ -98,6 +98,14 @@ test("回复结束后提示模型没有返回内容", async () => {
   expect(await renderList(messages, "ready")).toContain("模型没有返回可显示内容。");
 });
 
+test.each(["streaming", "done"] as const)("恢复历史文本（%s）时显示保存内容", async (state) => {
+  const frame = await renderList(
+    [{ id: "saved", role: "assistant", parts: [{ type: "text", text: "已保存的回答", state }] }],
+    "ready",
+  );
+  expect(frame).toContain("已保存的回答");
+});
+
 test("按角色显示标签，工具片段显示名称与状态", async () => {
   const messages: UIMessage[] = [
     { id: "u1", role: "user", parts: [{ type: "text", text: "帮我搜索" }] },
@@ -164,6 +172,7 @@ test("推理直接显示，角色与内容紧凑排列，工具详情仍可用�
   }
 
   testSetup = await testRender(<Conversation />, { width: 80, height: 20, kittyKeyboard: true });
+  await testSetup.flush();
   await testSetup.waitForFrame((frame) => frame.includes("天气晴朗。"));
   const lines = testSetup
     .captureCharFrame()

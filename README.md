@@ -6,6 +6,7 @@
 
 - Bun 1.4.2 或更高版本；仓库的 `packageManager` 固定为 `bun@1.4.2`。
 - CLI 需要交互式终端。
+- PostgreSQL 通过 Docker Desktop 或已启动的 Podman machine 运行。
 
 ## 安装与启动
 
@@ -13,6 +14,9 @@
 
 ```bash
 bun install
+bun run db:up
+bun run db:generate
+bun run db:migrate
 ```
 
 启动服务器，支持热重载：
@@ -27,7 +31,10 @@ bun run dev:server
 | --- | --- |
 | `GET /` | `Hello from Hono + Bun!` |
 | `GET /health` | `{"status":"ok"}` |
-| `POST /ai` | 接收 `{ "messages": [...] }` 对话历史并返回 AI SDK 标准 SSE 流 |
+| `POST /conversations` | 创建对话，返回对话 ID |
+| `GET /conversations` | 按最后活动时间返回最近 50 条对话 |
+| `GET /conversations/:id` | 恢复消息、工具记录和生成状态/错误 |
+| `POST /ai` | 接收 `{ conversationId, requestId, message }`，保存新输入并返回 AI SDK 标准 SSE 流 |
 
 可以复制 `apps/server/.env.example` 为 `apps/server/.env` 修改端口，Bun 会自动加载该文件；也可以通过环境变量指定端口：
 
@@ -37,15 +44,19 @@ PORT=4000 bun run dev:server
 
 测试 AI SDK + DeepSeek 时，复制 `apps/server/.env.example` 为 `apps/server/.env`，填写
 `DEEPSEEK_API_KEY`，然后运行 `bun run dev:server`。
-聊天页面使用 AI SDK React 的 `useChat` 在当前页面内存中管理消息和流式响应；每次发送新消息时，
-`POST /ai` 收到完整对话历史，经 Zod 和 AI SDK 消息校验后使用 `convertToModelMessages` 传给
-`streamText`。消息不写入数据库、文件或外部存储；离开聊天页或退出 CLI 后对话会丢失。
+聊天页面使用 AI SDK React 的 `useChat` 管理流式展示，消息持久化到 PostgreSQL。
+`POST /ai` 只接收一条新的用户文本消息，服务端读取历史，经 Zod 和 AI SDK 消息校验后
+使用 `convertToModelMessages` 传给 `streamText`。每约一秒保存包含推理、工具调用及结果的
+完整消息快照；完成或取消时保存最终内容。失败、取消和中断的部分 AI 回答可以恢复展示，
+下一轮模型上下文仅包含用户输入和已完成的 AI 回答。同一对话一次只允许一个生成请求，
+重复 requestId 或忙碌的对话返回 HTTP 409。
 也可以这样手动调用聊天端点：
 
 ```bash
+# 先 POST /conversations 获取 id，再填入下面的 conversationId。
 curl -N -X POST http://localhost:3000/ai \
   -H 'Content-Type: application/json' \
-  --data '{"messages":[{"id":"user-1","role":"user","parts":[{"type":"text","text":"请用中文写一首小诗。"}]}]}'
+  --data '{"conversationId":"替换为对话UUID","requestId":"user-1","message":{"id":"user-1","role":"user","parts":[{"type":"text","text":"请用中文写一首小诗。"}]}}'
 ```
 
 `POST /ai` 调用 `deepseek-flash`，通过 `reasoning: "high"` 开启思考模式，
@@ -94,6 +105,8 @@ bun run dev:cli
 首页通过 `useServerStatus` hook 使用 RPC 客户端请求 `/health`，显示 `Server: ok`；服务未启动或请求失败时显示 `Server: unavailable`。
 
 在首页输入非空提示词后按无修饰键的 `Enter` 进入聊天页；`Shift+Enter` 可在提示词中换行。提示词通过 Zod 校验并去除首尾空白，带其他修饰键的 Enter 不会提交。
+首页先创建数据库对话，成功后统一进入 `/chat/:id`，再加载该对话并发送首条提示词。
+创建期间阻止重复提交；失败时保留输入供重试，离开首页会取消创建请求。历史对话也使用同一路由。
 聊天页在收到首页的提示词后自动请求模型，逐步以单色 Markdown 显示回复；角色标签统一使用紫色，
 正文使用白色，推理以灰色直接显示，工具调用默认显示一行状态摘要，失败或拒绝使用红色提示。
 可继续输入消息，按 `Enter` 发送，
@@ -102,6 +115,28 @@ bun run dev:cli
 状态行区分连接、等待内容、生成和失败，请求失败时保留已收到的内容。当前模型开启推理，并注册了加法工具，
 因此只有实际收到相应事件时才显示推理或工具记录；离开聊天页会取消请求。
 点击“返回首页”可离开聊天页。
+首页按 `F2` 或点击“历史对话”打开记录，使用方向键选择、Enter 恢复，Backspace 返回首页。
+恢复其他客户端仍在生成的对话时，CLI 定期同步已保存内容，并等待生成结束后允许继续发送。
+
+## 本地数据库
+
+数据库模块位于 `apps/server`，使用 Prisma 7.10 和 PostgreSQL adapter；CLI 不直连数据库。
+`bun run db:up` 自动选择可用的 Docker 或 Podman，首次运行创建本地 `.env` 中的随机密码和
+连接串，保留已有模型配置。默认端口 `127.0.0.1:54324`，可在启动前通过 `.env` 的
+`POSTGRES_PORT` 调整。数据库使用命名卷；`bun run db:down` 停止服务并保留数据。
+
+```bash
+bun run db:up              # 启动并等待 PostgreSQL 健康
+bun run db:generate        # 安装或修改 schema 后生成 Prisma Client
+bun run db:migrate         # 开发时创建/应用迁移
+bun run --cwd apps/server db:deploy  # 仅应用已提交迁移
+bun run --cwd apps/server db:studio  # 查看本地数据库
+bun run db:down            # 停止，不删除数据卷
+```
+
+Prisma Client 生成到 `apps/server/src/generated/prisma`，不提交生成文件。服务端热重载复用
+连接池；正常退出会取消生成并保存部分消息，强制终止后失去心跳超过 90 秒的生成记录会在
+下次访问时标记为中断。具体表结构和一致性约束见 [对话持久化设计](docs/conversation-storage.md)。
 
 CLI 开发模式使用 `bun --watch`，保存已导入的 `.ts`、`.tsx` 文件后自动重启并回到首页，无需手动重启。重新启动进程会刷新依赖解析和终端状态，避免 `--hot` 在安装新依赖后继续使用旧的解析结果。输入框未聚焦时按 `Q`，或按 `Esc`、`Ctrl+C` 可退出并恢复终端。修改依赖或 `package.json` 后，请完成 `bun install` 并重新运行 `bun run dev:cli`。
 
@@ -123,11 +158,14 @@ bun run check       # Biome 检查、所有 workspace 的类型检查，然后�
 bun run lint        # 检查格式、导入顺序和代码规则
 bun run format      # 统一格式化
 bun run typecheck   # 逐个 workspace 检查类型
-bun run test        # 运行所有 *.test.ts / *.test.tsx（bun test）
+bun run test        # 应用测试库迁移，再运行 bun test
 ```
 
 测试与源码放在同一目录，命名为 `*.test.ts` 或 `*.test.tsx`。CLI 的交互测试使用
 `@opentui/react/test-utils` 的 `testRender` 驱动按键，不需要真实模型调用。
+测试需要先运行 `bun run db:up`，使用独立的 `freecode_test` 数据库，自动生成 Prisma Client
+并应用迁移。也可配置 `TEST_DATABASE_URL` 指向已创建、名称以 `_test` 结尾的数据库；
+测试不会清空开发库。直接 `bun test` 不能代替此初始化流程。
 
 ## 仓库结构
 
@@ -145,12 +183,16 @@ bun run test        # 运行所有 *.test.ts / *.test.tsx（bun test）
     │   ├── package.json  # @freecode/server；Hono 及服务开发工具
     │   ├── tsconfig.json # 继承公共配置，仅检查自己的源码
     │   ├── .env.example
+    │   ├── prisma.config.ts # Prisma CLI 配置，读取 DATABASE_URL
+    │   ├── prisma/       # schema、迁移及本地初始化 SQL
     │   └── src/
     │       ├── app.ts    # 组合根：挂载子路由、导出 AppType，导入时不会启动监听
     │       ├── index.ts  # Bun HTTP 服务入口
+    │       ├── db/       # 服务端 Prisma Client 与连接池
     │       ├── routes/   # HTTP 边界：路径、方法与请求校验
     │       │   ├── system.ts # GET / 与 GET /health
-    │       │   └── ai.ts     # POST /ai
+    │       │   ├── ai.ts     # POST /ai
+    │       │   └── conversations.ts # 对话创建与历史读取
     │       └── features/ # 按功能放置业务实现
     │           └── ai/
     │               ├── chatRequestSchema.ts # 请求体 Zod schema
@@ -173,6 +215,7 @@ bun run test        # 运行所有 *.test.ts / *.test.tsx（bun test）
             └── features/         # 按功能组织，页面与专属组件、hook 就近放置
                 ├── chat/
                 │   ├── ChatScreen.tsx
+                │   ├── HistoryScreen.tsx
                 │   ├── chatParts.ts
                 │   ├── chatLabels.ts
                 │   ├── components/
@@ -215,7 +258,8 @@ CLI 的 `tsconfig.json` 继承公共配置，并单独启用：
 - 检查工具通过 `bun run --bun` 执行，无需额外安装 Node.js。
 - `bunfig.toml` 使用 `isolated` linker，应用只能直接导入自己声明的依赖。
 - 在根目录执行安装并提交 `bun.lock`；不要为子包创建单独的锁文件。
-- CI 使用 `bun install --frozen-lockfile` 安装，再运行 `bun run check`（含测试）。
+- CI 使用 `bun install --frozen-lockfile` 安装，准备独立 PostgreSQL 测试库并配置
+  `TEST_DATABASE_URL`，执行 `bun run db:generate` 后运行 `bun run check`（含测试）。
 - 子包之间需要依赖时，使用 `workspace:*`，并在 `package.json` 中显式声明。
 - CLI 启动脚本使用 `--cwd` 直接运行，保留交互式终端输入输出。
 - 本地 `.env` 不提交；可共享配置只提交 `.env.example`。

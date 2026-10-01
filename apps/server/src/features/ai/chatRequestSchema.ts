@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-/**
- * `POST /ai` 的请求体：只约束 messages 是非空数组，
- * 单个 UIMessage 的结构交给 AI SDK 的 `validateUIMessages` 校验。
- */
-export const chatRequestSchema = z.object({ messages: z.array(z.unknown()).min(1) });
+/** 消息协议由 SDK 校验；历史由服务端读取，客户端只提交新输入。 */
+export const chatRequestSchema = z.object({
+  conversationId: z.uuid(),
+  requestId: z.string().min(1).max(128),
+  message: z.unknown(),
+});

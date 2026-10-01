@@ -3,10 +3,17 @@ import { useRef } from "react";
 import { promptKeyBindings, readPrompt } from "../../../lib/textareaKeys";
 import { theme } from "../../../lib/theme";
 
-export function PromptTextarea({ onSubmit }: { onSubmit: (prompt: string) => void }) {
+export function PromptTextarea({
+  onSubmit,
+  waiting = false,
+}: {
+  onSubmit: (prompt: string) => void;
+  waiting?: boolean;
+}) {
   const textareaRef = useRef<TextareaRenderable>(null);
 
   function handleSubmit() {
+    if (waiting) return;
     const prompt = readPrompt(textareaRef.current);
     if (prompt !== undefined) onSubmit(prompt);
   }

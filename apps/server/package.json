@@ -9,16 +9,26 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
-    "typecheck": "bun run --bun tsc --noEmit"
+    "typecheck": "bun run --bun tsc --noEmit",
+    "db:generate": "bun --bun prisma generate",
+    "db:migrate": "bun --bun prisma migrate dev",
+    "db:deploy": "bun --bun prisma migrate deploy",
+    "db:studio": "bun --bun prisma studio"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "3.0.56",
     "@hono/zod-validator": "0.9.1",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
     "ai": "7.0.122",
+    "dotenv": "18.0.5",
     "hono": "4.13.10",
+    "pg": "8.22.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@hono/cli": "0.2.0-next.9"
+    "@hono/cli": "0.2.0-next.9",
+    "@types/pg": "8.23.1",
+    "prisma": "7.10.0"
   }
 }

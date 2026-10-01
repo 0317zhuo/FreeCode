@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MessageRole {
+  system
+  user
+  assistant
+}
+
+enum GenerationStatus {
+  running
+  completed
+  failed
+  cancelled
+  interrupted
+}
+
+model Conversation {
+  id             String          @id @default(uuid()) @db.Uuid
+  title          String?
+  nextMessageSeq Int             @default(0) @map("next_message_seq")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastActivityAt DateTime        @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  messages       Message[]
+  runs           GenerationRun[]
+
+  @@index([lastActivityAt, id])
+  @@map("conversations")
+}
+
+model Message {
+  id             String          @id
+  conversationId String          @map("conversation_id") @db.Uuid
+  seq            Int
+  role           MessageRole
+  parts          Json            @default("[]") @db.JsonB
+  metadata       Json?           @db.JsonB
+  schemaVersion  Int             @default(1) @map("schema_version")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  conversation   Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  triggeredRuns  GenerationRun[] @relation("RunInput")
+  responseRun    GenerationRun?  @relation("RunOutput")
+
+  @@unique([conversationId, seq])
+  @@unique([conversationId, id])
+  @@map("messages")
+}
+
+model GenerationRun {
+  id              String           @id @default(uuid()) @db.Uuid
+  conversationId  String           @map("conversation_id") @db.Uuid
+  requestId       String           @map("request_id")
+  inputMessageId  String           @map("input_message_id")
+  outputMessageId String?          @map("output_message_id")
+  status          GenerationStatus @default(running)
+  provider        String
+  model           String
+  finishReason    String?          @map("finish_reason")
+  error           Json?            @db.JsonB
+  usage           Json?            @db.JsonB
+  startedAt       DateTime         @default(now()) @map("started_at") @db.Timestamptz(3)
+  heartbeatAt     DateTime         @default(now()) @map("heartbeat_at") @db.Timestamptz(3)
+  endedAt         DateTime?        @map("ended_at") @db.Timestamptz(3)
+  conversation    Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  inputMessage    Message          @relation("RunInput", fields: [conversationId, inputMessageId], references: [conversationId, id], onDelete: NoAction, onUpdate: NoAction)
+  outputMessage   Message?         @relation("RunOutput", fields: [conversationId, outputMessageId], references: [conversationId, id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([conversationId, requestId])
+  @@unique([conversationId, outputMessageId])
+  @@index([conversationId, inputMessageId])
+  @@index([conversationId, startedAt])
+  @@index([status, heartbeatAt])
+  @@map("generation_runs")
+}
