@@ -27,8 +27,7 @@ bun run dev:server
 | --- | --- |
 | `GET /` | `Hello from Hono + Bun!` |
 | `GET /health` | `{"status":"ok"}` |
-| `GET /ai` | 使用固定测试提示词的 AI SDK 标准 SSE 流 |
-| `POST /ai` | 接收 `{ "prompt": "..." }` 并返回 AI SDK 标准 SSE 流 |
+| `POST /ai` | 接收 `{ "messages": [...] }` 对话历史并返回 AI SDK 标准 SSE 流 |
 
 可以复制 `apps/server/.env.example` 为 `apps/server/.env` 修改端口，Bun 会自动加载该文件；也可以通过环境变量指定端口：
 
@@ -37,33 +36,54 @@ PORT=4000 bun run dev:server
 ```
 
 测试 AI SDK + DeepSeek 时，复制 `apps/server/.env.example` 为 `apps/server/.env`，填写
-`DEEPSEEK_API_KEY`，然后运行 `bun run dev:server`。使用 CLI 的“大模型测试”页面查看逐步生成的文本，
-也可以运行 `curl -N http://localhost:3000/ai` 查看固定提示词的原始 SSE 事件。
-聊天页面使用 AI SDK React 的 `useCompletion`，通过 Hono RPC 客户端向 `POST /ai` 发送首页提交的提示词；
-请求体经 Zod 校验后传给 `streamText`，逐步返回模型文本。也可以这样手动调用动态端点：
+`DEEPSEEK_API_KEY`，然后运行 `bun run dev:server`。
+聊天页面使用 AI SDK React 的 `useChat` 在当前页面内存中管理消息和流式响应；每次发送新消息时，
+`POST /ai` 收到完整对话历史，经 Zod 和 AI SDK 消息校验后使用 `convertToModelMessages` 传给
+`streamText`。消息不写入数据库、文件或外部存储；离开聊天页或退出 CLI 后对话会丢失。
+也可以这样手动调用聊天端点：
 
 ```bash
 curl -N -X POST http://localhost:3000/ai \
   -H 'Content-Type: application/json' \
-  --data '{"prompt":"请用中文写一首小诗。"}'
+  --data '{"messages":[{"id":"user-1","role":"user","parts":[{"type":"text","text":"请用中文写一首小诗。"}]}]}'
 ```
 
-`GET /ai` 保留给“大模型测试”页面，使用固定提示词；两个端点都调用 `deepseek-flash`，关闭思考模式，
+`POST /ai` 调用 `deepseek-flash`，通过 `reasoning: "high"` 开启思考模式，
 通过 `toUIMessageStream({ stream: result.stream })` 和 `createUIMessageStreamResponse` 返回 SSE。
-每次请求都会调用 DeepSeek API。修改密钥后重启服务。
+通过校验且配置了密钥的请求都会调用 DeepSeek API，不提供固定回复或演示工具。
+修改密钥后重启服务。
 缺少密钥时返回 HTTP 500 和配置提示；流中的鉴权失败、余额不足、限流及其他生成错误
 通过错误事件传给客户端，服务端只记录错误名称和状态码。生成总超时为 60 秒，客户端断开会中止生成。
 
-服务端通过链式路由保留 RPC 类型，并从 `@freecode/server` 导出 `AppType`。CLI 的 `apps/cli/src/client.ts` 使用 `import type` 导入该类型，通过 `hc<AppType>()` 创建请求客户端：
+服务端通过 AI SDK 的 `tool` 注册 `addNumbers` 工具，并随对话历史一起传给模型。
+该工具在服务端真实计算两个整数的和，参数 `a`、`b` 各限制在 -10 亿到 10 亿，返回 `{ "result": ... }`。
+工具参数与结果使用 Zod schema 校验；模型调用工具后，SDK 把结果传回模型继续生成回答，最多进行 3 步。
+普通问题由模型正常回答，只有模型实际调用工具时才出现工具记录。
+
+检查真实工具调用的渲染时，可在聊天页面输入：
+
+```text
+请调用 addNumbers 工具计算 123 + 456，并根据工具结果回答。
+```
+
+页面会随真实事件显示 `[工具: addNumbers]` 的参数准备、等待结果和完成状态。
+按 `Tab` 切换到记录区，再按 `Enter` 展开详情，可查看输入 `{ "a": 123, "b": 456 }`
+与输出 `{ "result": 579 }`；继续输入“再调用工具把刚才的结果加上 21”可检查后续对话。
+工具执行很快，中间状态可能只短暂出现。以上操作会实际调用 DeepSeek API。
+
+服务端按“路由边界”和“功能实现”分层：`src/routes/` 只负责路径、方法和请求校验，链式定义各自的
+子路由；`src/features/<feature>/` 放该功能的业务实现；`src/app.ts` 用 `app.route()` 把子路由挂到应用上。
+Hono 的 `route()` 会合并子路由类型，因此挂载后仍能从 `@freecode/server` 导出完整的 `AppType`。
+CLI 的 `apps/cli/src/lib/rpc.ts` 使用 `import type` 导入该类型，通过 `hc<AppType>()` 创建请求客户端：
 
 ```ts
-import { client } from "./client";
-
-const response = await client.health.$get();
+// 在 src/features/<feature>/ 下的任意文件中，按相对路径导入或经过 hooks 使用
+const response = await rpc.health.$get();
 const data = await response.json(); // 自动推导为 { status: string }
 ```
 
-客户端默认连接 `http://localhost:3000`；修改服务端端口时，同步修改 `client.ts` 中的地址。
+客户端默认连接 `http://localhost:3000`；服务端使用其他端口时，复制 `apps/cli/.env.example`
+为 `apps/cli/.env` 并设置 `FREECODE_SERVER_URL`，无需修改源码。
 
 在另一个终端打开欢迎屏幕：
 
@@ -74,16 +94,14 @@ bun run dev:cli
 首页通过 `useServerStatus` hook 使用 RPC 客户端请求 `/health`，显示 `Server: ok`；服务未启动或请求失败时显示 `Server: unavailable`。
 
 在首页输入非空提示词后按无修饰键的 `Enter` 进入聊天页；`Shift+Enter` 可在提示词中换行。提示词通过 Zod 校验并去除首尾空白，带其他修饰键的 Enter 不会提交。
-聊天页在收到首页的提示词后自动请求模型，逐步显示回复；请求失败时保留已收到的内容并显示错误，离开聊天页会取消请求。
-点击“返回首页”可离开聊天页；首页其他导航入口不会进入聊天页。
-
-点击首页的“大模型测试”进入测试页面，页面会自动请求服务端 `/ai`，显示加载提示，
-随后随流更新模型返回的文本；请求或流读取失败时保留已收到的文本并显示错误。
-页面会识别超时、中断、无效流数据和空输出。内容支持方向键和鼠标滚轮滚动，
-点击“返回首页”即可离开。每次进入页面都会发起一次新的生成请求，离开页面会取消客户端请求。
-使用前请先配置服务端 `DEEPSEEK_API_KEY` 并运行 `bun run dev:server`。
-
-大模型测试功能的请求、流解析、内容和错误状态、取消逻辑集中在 `useAiTest` hook 中；`AiTestScreen` 负责界面渲染和返回首页交互。
+聊天页在收到首页的提示词后自动请求模型，逐步以单色 Markdown 显示回复；角色标签统一使用紫色，
+正文使用白色，推理以灰色直接显示，工具调用默认显示一行状态摘要，失败或拒绝使用红色提示。
+可继续输入消息，按 `Enter` 发送，
+按 `Shift+Enter` 换行，按 `Tab` 在输入框与消息记录区之间切换。记录区用方向键或翻页键滚动；
+出现工具片段时，可用 `j/k` 选择、`Enter` 逐项展开或收起输入输出，也可点击该片段切换详情。
+状态行区分连接、等待内容、生成和失败，请求失败时保留已收到的内容。当前模型开启推理，并注册了加法工具，
+因此只有实际收到相应事件时才显示推理或工具记录；离开聊天页会取消请求。
+点击“返回首页”可离开聊天页。
 
 CLI 开发模式使用 `bun --watch`，保存已导入的 `.ts`、`.tsx` 文件后自动重启并回到首页，无需手动重启。重新启动进程会刷新依赖解析和终端状态，避免 `--hot` 在安装新依赖后继续使用旧的解析结果。输入框未聚焦时按 `Q`，或按 `Esc`、`Ctrl+C` 可退出并恢复终端。修改依赖或 `package.json` 后，请完成 `bun install` 并重新运行 `bun run dev:cli`。
 
@@ -101,11 +119,15 @@ bun run start:cli
 ## 代码检查
 
 ```bash
-bun run check       # Biome 检查和所有 workspace 的 TypeScript 类型检查
+bun run check       # Biome 检查、所有 workspace 的类型检查，然后运行测试
 bun run lint        # 检查格式、导入顺序和代码规则
 bun run format      # 统一格式化
 bun run typecheck   # 逐个 workspace 检查类型
+bun run test        # 运行所有 *.test.ts / *.test.tsx（bun test）
 ```
+
+测试与源码放在同一目录，命名为 `*.test.ts` 或 `*.test.tsx`。CLI 的交互测试使用
+`@opentui/react/test-utils` 的 `testRender` 驱动按键，不需要真实模型调用。
 
 ## 仓库结构
 
@@ -124,15 +146,49 @@ bun run typecheck   # 逐个 workspace 检查类型
     │   ├── tsconfig.json # 继承公共配置，仅检查自己的源码
     │   ├── .env.example
     │   └── src/
-    │       ├── app.ts    # Hono 应用，导入时不会启动监听
-    │       └── index.ts  # Bun HTTP 服务入口
+    │       ├── app.ts    # 组合根：挂载子路由、导出 AppType，导入时不会启动监听
+    │       ├── index.ts  # Bun HTTP 服务入口
+    │       ├── routes/   # HTTP 边界：路径、方法与请求校验
+    │       │   ├── system.ts # GET / 与 GET /health
+    │       │   └── ai.ts     # POST /ai
+    │       └── features/ # 按功能放置业务实现
+    │           └── ai/
+    │               ├── chatRequestSchema.ts # 请求体 Zod schema
+    │               ├── chatTools.ts         # 模型可调用的加法工具
+    │               └── streamCompletion.ts  # DeepSeek 流式生成与错误映射
     └── cli/
         ├── package.json  # @freecode/cli；OpenTUI Core、React 绑定及 React
         ├── tsconfig.json # CLI 专属 JSX 和 DOM 类型配置
+        ├── .env.example  # FREECODE_SERVER_URL
         └── src/
-            ├── App.tsx   # React 欢迎组件与键盘退出
-            └── index.tsx # 终端、React root 与热重载入口
+            ├── index.tsx         # 终端、React root 与退出清理由入口统一管理
+            ├── app/
+            │   ├── App.tsx       # 应用外壳：全局退出快捷键 + MemoryRouter
+            │   └── routes.tsx    # 路由表与路由状态校验
+            ├── lib/              # 跨功能共享层
+            │   ├── rpc.ts        # Hono RPC 客户端
+            │   ├── promptSchema.ts # 提示词输入边界
+            │   ├── textareaKeys.ts # 输入框按键契约与提交校验
+            │   └── theme.ts      # 统一终端配色
+            └── features/         # 按功能组织，页面与专属组件、hook 就近放置
+                ├── chat/
+                │   ├── ChatScreen.tsx
+                │   ├── chatParts.ts
+                │   ├── chatLabels.ts
+                │   ├── components/
+                │   └── hooks/
+                └── home/
+                    ├── HomeScreen.tsx
+                    ├── components/
+                    └── hooks/
 ```
+
+服务端的依赖方向同样是单向的：`routes/*` 可以依赖 `features/*`，`features/*` 不依赖任何路由，
+feature 之间不互相引用；入口 `index.ts` 只负责监听和运行时相关的连接策略。新增接口时先在
+`features/<feature>/` 实现业务，再在 `routes/` 里暴露路径，最后在 `app.ts` 挂载。
+
+CLI 的依赖方向是单向的：`features/*` 可以依赖 `lib/`，`lib/` 不依赖任何 feature；
+feature 之间不互相引用，跨功能复用的 schema、配色和按键映射一律放在 `lib/`。
 
 根目录直接放应用也符合 Bun workspaces 的规则，并没有必须使用某个目录名的限制。本项目将可运行应用放入 `apps/`，使用 `apps/*` 声明 workspaces。将来出现共享 UI、类型或业务库时，再创建 `packages/<包名>/` 并把 `packages/*` 加入 workspaces；当前无需创建空的共享包。
 
@@ -159,7 +215,7 @@ CLI 的 `tsconfig.json` 继承公共配置，并单独启用：
 - 检查工具通过 `bun run --bun` 执行，无需额外安装 Node.js。
 - `bunfig.toml` 使用 `isolated` linker，应用只能直接导入自己声明的依赖。
 - 在根目录执行安装并提交 `bun.lock`；不要为子包创建单独的锁文件。
-- CI 使用 `bun install --frozen-lockfile` 安装，再运行 `bun run check`。
+- CI 使用 `bun install --frozen-lockfile` 安装，再运行 `bun run check`（含测试）。
 - 子包之间需要依赖时，使用 `workspace:*`，并在 `package.json` 中显式声明。
 - CLI 启动脚本使用 `--cwd` 直接运行，保留交互式终端输入输出。
 - 本地 `.env` 不提交；可共享配置只提交 `.env.example`。
@@ -183,7 +239,8 @@ bunx --bun hono routes src/app.ts
 bunx --bun hono request /health src/app.ts --runtime bun
 ```
 
-CLI 的应用入口为 `src/app.ts`；更多命令以 `agent-context` 输出为准。
+CLI 的应用入口为 `src/app.ts`；更多命令以 `agent-context` 输出为准。调整路由后可以先执行 `hono routes`
+对比路径与方法，再用 `hono request` 逐个确认响应，无需启动 HTTP 服务。
 
 ## 参考
 

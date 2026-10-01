@@ -16,9 +16,10 @@
     "start:server": "bun run --cwd apps/server start",
     "start:cli": "bun run --cwd apps/cli start",
     "typecheck": "bun run --workspaces --sequential typecheck",
+    "test": "bun test",
     "lint": "bun run --bun biome check .",
     "format": "bun run --bun biome format --write .",
-    "check": "bun run lint && bun run typecheck"
+    "check": "bun run lint && bun run typecheck && bun run test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

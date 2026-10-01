@@ -4,11 +4,11 @@
 
 本项目是 Bun workspaces 管理的 TypeScript monorepo，可运行应用位于 `apps/`：
 
-- `apps/server/src/app.ts` 定义 Hono 路由；`src/index.ts` 启动 HTTP 服务。保持应用定义与监听入口分离。
-- `apps/cli/src/index.tsx` 管理渲染器、热重载与退出清理；CLI 源码按应用层和功能组织：`src/app/App.tsx` 放全局应用行为，`src/features/<feature>/` 放功能界面及其专属组件。仅在多个功能实际复用时才抽取共享目录。
+- `apps/server/src/app.ts` 是 Hono 应用组合根，只挂载 `src/routes/` 下的子路由并导出 `AppType`；`src/index.ts` 启动 HTTP 服务。保持应用定义与监听入口分离；`src/routes/` 只放路径、方法与请求校验，业务实现放 `src/features/<feature>/`，依赖方向为 `routes/* -> features/*`，feature 之间不互相引用。新增接口时先在 `features/` 实现业务，再在 `routes/` 暴露路径，最后在 `app.ts` 挂载。
+- `apps/cli/src/index.tsx` 管理渲染器、热重载与退出清理；CLI 源码按三层组织：`src/app/` 放应用外壳与路由，`src/features/<feature>/` 放页面、专属组件与专属 hook，`src/lib/` 放跨功能共享的 schema、客户端、配色和按键契约。依赖方向单向：`features/*` 可依赖 `lib/`，`lib/` 不依赖任何 feature，feature 之间不互相引用。
 - 根目录的 `tsconfig.base.json`、`biome.json`、`.editorconfig` 提供公共规则；`bun.lock` 是唯一锁文件。
 
-当前没有共享包、独立测试目录或静态资源目录；仅在实际需要时新增。
+当前没有共享包、独立测试目录或静态资源目录；仅在实际需要时新增。测试文件与源码相邻存放，不单独建目录。
 
 ## 安装、开发与检查命令
 
@@ -20,7 +20,8 @@
 | `bun run dev:server` | 热重载启动服务，默认端口 3000 |
 | `bun run dev:cli` | 在交互式终端中启动支持热重载的 CLI |
 | `bun run start:server` / `bun run start:cli` | 普通启动，不监听文件变化 |
-| `bun run check` | 执行 Biome 与所有 workspace 的类型检查 |
+| `bun run test` | 运行所有 `*.test.ts` / `*.test.tsx`（`bun test`） |
+| `bun run check` | 执行 Biome、所有 workspace 的类型检查与测试 |
 | `bun run lint` | 检查格式、导入顺序和代码规则 |
 | `bun run format` | 写入格式化结果 |
 | `bun run typecheck` | 逐个 workspace 检查 TypeScript 类型 |
@@ -70,9 +71,9 @@ CLI 的 JSX 设置仅放在 `apps/cli/tsconfig.json`，保留 `@opentui/react` J
 
 ## 测试与验证
 
-当前有少量 CLI 测试，但没有 `test` 脚本或覆盖率门槛。新增自动化测试建议使用 `bun:test`，命名为 `*.test.ts` 或 `*.test.tsx` 并与源码相邻，从根目录运行 `bun test`。服务测试导入 `app.ts`，避免启动监听。
+自动化测试使用 `bun:test`，命名为 `*.test.ts` 或 `*.test.tsx` 并与源码相邻，从根目录运行 `bun run test`（已接入 `bun run check`）。服务测试导入 `app.ts`，避免启动监听；CLI 交互测试使用 `@opentui/react/test-utils` 的 `testRender`，用模拟按键覆盖提交、修饰键和退出等行为，不依赖真实模型调用。当前没有覆盖率门槛。
 
-提交前运行 `bun run check`。服务变更验证相关路由及 `/health`；CLI 变更在交互式终端验证显示、热重载和 `Q`、`Esc`、`Ctrl+C` 退出后的终端恢复。
+提交前运行 `bun run check`。服务变更验证相关路由及 `/health`；CLI 变更在交互式终端验证显示、热重载和 `Q`、`Esc`、`Ctrl+C` 退出后的终端恢复。CLI 连接的服务端地址用 `FREECODE_SERVER_URL` 覆盖，默认 `http://localhost:3000`。聊天接口仅调用真实模型；推理与工具调用的渲染通过自动化测试中的模拟消息验证。
 
 ## 提交与 Pull Request
 

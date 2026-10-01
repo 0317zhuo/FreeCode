@@ -1,3 +1,5 @@
+import { theme } from "../../../lib/theme";
+
 export function AsciiTitle() {
-  return <ascii-font text="FREECODE" font="block" color="#f5f5f5" />;
+  return <ascii-font text="FREECODE" font="block" color={theme.accent} />;
 }

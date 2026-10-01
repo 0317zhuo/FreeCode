@@ -1,14 +1,15 @@
+import { theme } from "../../lib/theme";
 import { AsciiTitle } from "./components/AsciiTitle";
 import { PromptTextarea } from "./components/PromptTextarea";
-import { useServerStatus } from "./useServerStatus";
+import { type ServerStatus, useServerStatus } from "./hooks/useServerStatus";
 
-export function HomeScreen({
-  onNavigate,
-  onSubmitPrompt,
-}: {
-  onNavigate: (path: "/about" | "/settings" | "/ai") => void;
-  onSubmitPrompt: (prompt: string) => void;
-}) {
+const serverStatusLabels: Record<ServerStatus, string> = {
+  checking: "checking...",
+  ok: "ok",
+  unavailable: "unavailable",
+};
+
+export function HomeScreen({ onSubmitPrompt }: { onSubmitPrompt: (prompt: string) => void }) {
   const serverStatus = useServerStatus();
 
   return (
@@ -18,27 +19,13 @@ export function HomeScreen({
       flexDirection="column"
       alignItems="center"
       justifyContent="center"
-      backgroundColor="#000000"
+      backgroundColor={theme.background}
       padding={2}
     >
       <box width="100%" maxWidth={110} flexDirection="column" alignItems="center" gap={3}>
         <AsciiTitle />
         <PromptTextarea onSubmit={onSubmitPrompt} />
-        <text>Server: {serverStatus} · Click a page to open it.</text>
-        <box flexDirection="row" gap={2}>
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI boxes use mouse handlers for terminal interactions. */}
-          <box border paddingX={2} onMouseDown={() => onNavigate("/ai")}>
-            <text>大模型测试</text>
-          </box>
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI boxes use mouse handlers for terminal interactions. */}
-          <box border paddingX={2} onMouseDown={() => onNavigate("/about")}>
-            <text>About</text>
-          </box>
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI boxes use mouse handlers for terminal interactions. */}
-          <box border paddingX={2} onMouseDown={() => onNavigate("/settings")}>
-            <text>Settings</text>
-          </box>
-        </box>
+        <text>Server: {serverStatusLabels[serverStatus]}</text>
       </box>
     </box>
   );

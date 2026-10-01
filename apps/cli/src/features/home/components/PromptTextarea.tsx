@@ -1,36 +1,26 @@
-import type { TextareaOptions, TextareaRenderable } from "@opentui/core";
+import type { TextareaRenderable } from "@opentui/core";
 import { useRef } from "react";
-import { chatPromptSchema } from "../../chat/promptSchema";
-
-const promptKeyBindings = [
-  { name: "return", action: "submit" },
-  { name: "kpenter", action: "submit" },
-  { name: "linefeed", action: "submit" },
-  { name: "return", shift: true, action: "newline" },
-  { name: "kpenter", shift: true, action: "newline" },
-  { name: "linefeed", shift: true, action: "newline" },
-  { name: "return", meta: true, action: "newline" },
-  { name: "kpenter", meta: true, action: "newline" },
-] satisfies TextareaOptions["keyBindings"];
+import { promptKeyBindings, readPrompt } from "../../../lib/textareaKeys";
+import { theme } from "../../../lib/theme";
 
 export function PromptTextarea({ onSubmit }: { onSubmit: (prompt: string) => void }) {
   const textareaRef = useRef<TextareaRenderable>(null);
 
   function handleSubmit() {
-    const result = chatPromptSchema.safeParse(textareaRef.current?.plainText);
-    if (result.success) onSubmit(result.data);
+    const prompt = readPrompt(textareaRef.current);
+    if (prompt !== undefined) onSubmit(prompt);
   }
 
   return (
-    <box width="100%" padding={1} backgroundColor="#111111" flexDirection="column">
+    <box width="100%" padding={1} backgroundColor="transparent" flexDirection="column">
       <box
         width="100%"
         height={14}
         border
         borderStyle="single"
-        borderColor="#454545"
+        borderColor={theme.border}
         padding={1}
-        backgroundColor="#0b0b0b"
+        backgroundColor="transparent"
       >
         <textarea
           ref={textareaRef}
@@ -39,16 +29,16 @@ export function PromptTextarea({ onSubmit }: { onSubmit: (prompt: string) => voi
           placeholder="Describe the app, task, or command you want to build..."
           focused
           wrapMode="word"
-          backgroundColor="#0b0b0b"
-          textColor="#e5e5e5"
-          cursorColor="#f5f5f5"
-          focusedBackgroundColor="#0b0b0b"
-          placeholderColor="#777777"
+          backgroundColor="transparent"
+          textColor={theme.foreground}
+          cursorColor={theme.accent}
+          focusedBackgroundColor="transparent"
+          placeholderColor={theme.muted}
           keyBindings={promptKeyBindings}
           onSubmit={handleSubmit}
         />
       </box>
-      <text fg="#777777">Enter 发送 · Shift+Enter 换行</text>
+      <text fg={theme.muted}>Enter 发送 · Shift+Enter 换行</text>
     </box>
   );
 }
