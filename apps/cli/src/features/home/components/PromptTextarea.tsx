@@ -1,3 +1,4 @@
+import { type AgentMode, agentModes, defaultAgentMode } from "@freecode/contracts";
 import type { TextareaRenderable } from "@opentui/core";
 import { useRef } from "react";
 import { promptKeyBindings, readPrompt } from "../../../lib/textareaKeys";
@@ -6,9 +7,11 @@ import { theme } from "../../../lib/theme";
 export function PromptTextarea({
   onSubmit,
   waiting = false,
+  mode = defaultAgentMode,
 }: {
   onSubmit: (prompt: string) => void;
   waiting?: boolean;
+  mode?: AgentMode;
 }) {
   const textareaRef = useRef<TextareaRenderable>(null);
 
@@ -45,7 +48,10 @@ export function PromptTextarea({
           onSubmit={handleSubmit}
         />
       </box>
-      <text fg={theme.muted}>Enter 发送 · Shift+Enter 换行</text>
+      <box width="100%" flexDirection="row" justifyContent="space-between">
+        <text fg={theme.accent}>模式：{agentModes[mode].name}</text>
+        <text fg={theme.muted}>Tab 切换模式 · Enter 发送 · Shift+Enter 换行</text>
+      </box>
     </box>
   );
 }

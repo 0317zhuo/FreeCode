@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * 消息记录区的焦点与详情展开状态：
- * Tab 切换焦点，j/k 移动选择，Enter 展开或收起，并把选中项滚动进可视区。
+ * Shift+Tab 切换焦点，j/k 移动选择，Enter 展开或收起，并把选中项滚动进可视区。
  */
 export function useChatDetailNavigation(detailIds: string[]) {
   const scrollRef = useRef<ScrollBoxRenderable>(null);
@@ -15,7 +15,8 @@ export function useChatDetailNavigation(detailIds: string[]) {
     selectedDetailId && detailIds.includes(selectedDetailId) ? selectedDetailId : detailIds.at(-1);
 
   useKeyboard((key) => {
-    if (key.name === "tab" && !key.ctrl && !key.meta && !key.shift) {
+    if (key.name === "tab" && key.shift && !key.ctrl && !key.meta && !key.super) {
+      key.preventDefault();
       setFocusMessages((value) => !value);
       return;
     }

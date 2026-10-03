@@ -24,10 +24,15 @@ export function createChatTransport(api: string, headers: () => Record<string, s
   return new CheckedChatTransport({
     api,
     headers,
-    prepareSendMessagesRequest({ id, messages }) {
+    prepareSendMessagesRequest({ id, messages, body }) {
       const message = messages.at(-1);
       return {
-        body: chatRequestSchema.parse({ conversationId: id, requestId: message?.id, message }),
+        body: chatRequestSchema.parse({
+          conversationId: id,
+          requestId: message?.id,
+          message,
+          mode: body?.mode,
+        }),
       };
     },
   });

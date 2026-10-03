@@ -16,4 +16,8 @@ test("聊天路由仅接受带有效提示词的状态", () => {
     success: true,
     data: { prompt: "hello" },
   });
+  expect(promptRouteStateSchema.safeParse({ prompt: "hello", mode: "unknown" }).success).toBe(
+    false,
+  );
+  expect(promptRouteStateSchema.parse({ prompt: "hello", mode: "readOnly" }).mode).toBe("readOnly");
 });

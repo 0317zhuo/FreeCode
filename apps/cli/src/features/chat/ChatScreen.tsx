@@ -1,3 +1,4 @@
+import { type AgentMode, defaultAgentMode } from "@freecode/contracts";
 import type { SavedConversation } from "../../lib/conversationApi";
 import { theme } from "../../lib/theme";
 import { deriveChatActivity, isChatBusy } from "./chatActivity";
@@ -13,10 +14,14 @@ export function ChatScreen({
   prompt,
   conversationId,
   onBack,
+  mode = defaultAgentMode,
+  promptMode,
 }: {
   prompt?: string;
   conversationId: string;
   onBack: () => void;
+  mode?: AgentMode;
+  promptMode?: AgentMode;
 }) {
   const { data, error } = useConversation(conversationId);
   if (!data)
@@ -29,21 +34,35 @@ export function ChatScreen({
         </box>
       </box>
     );
-  return <ChatContent key={data.id} conversation={data} prompt={prompt} onBack={onBack} />;
+  return (
+    <ChatContent
+      key={data.id}
+      conversation={data}
+      prompt={prompt}
+      mode={mode}
+      promptMode={promptMode}
+      onBack={onBack}
+    />
+  );
 }
 
 function ChatContent({
   conversation,
   prompt,
   onBack,
+  mode,
+  promptMode,
 }: {
   conversation: SavedConversation;
   prompt?: string;
   onBack: () => void;
+  mode: AgentMode;
+  promptMode?: AgentMode;
 }) {
   const { messages, sendMessage, status, error, remoteBusy, messageErrors } = useChatConversation(
     conversation,
     prompt,
+    promptMode,
   );
   const detailIds = getDetailIds(messages);
   const { scrollRef, focusMessages, activeDetailId, expandedIds, toggleDetail } =
@@ -79,9 +98,10 @@ function ChatContent({
         <text fg={theme.muted}>服务端正在生成，正在同步已保存内容…</text>
       )}
       <ChatComposer
+        mode={mode}
         focused={!focusMessages}
         waiting={isChatBusy(status) || remoteBusy}
-        onSubmit={(text) => void sendMessage({ text })}
+        onSubmit={(text) => void sendMessage({ text }, { body: { mode } })}
       />
       {/* biome-ignore lint/a11y/noStaticElementInteractions: OpenTUI boxes use mouse handlers for terminal interactions. */}
       <box height={1} flexShrink={0} alignSelf="flex-start" onMouseDown={onBack}>

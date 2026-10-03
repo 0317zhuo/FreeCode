@@ -1,3 +1,4 @@
+import { type AgentMode, defaultAgentMode } from "@freecode/contracts";
 import { useKeyboard } from "@opentui/react";
 import { theme } from "../../lib/theme";
 import { AsciiTitle } from "./components/AsciiTitle";
@@ -14,9 +15,11 @@ const serverStatusLabels: Record<ServerStatus, string> = {
 export function HomeScreen({
   onConversationCreated,
   onHistory,
+  mode = defaultAgentMode,
 }: {
   onConversationCreated: (id: string, prompt: string) => void;
   onHistory?: () => void;
+  mode?: AgentMode;
 }) {
   const serverStatus = useServerStatus();
   const { startConversation, waiting, error } = useStartConversation(onConversationCreated);
@@ -36,7 +39,11 @@ export function HomeScreen({
     >
       <box width="100%" maxWidth={110} flexDirection="column" alignItems="center" gap={3}>
         <AsciiTitle />
-        <PromptTextarea waiting={waiting} onSubmit={(prompt) => void startConversation(prompt)} />
+        <PromptTextarea
+          mode={mode}
+          waiting={waiting}
+          onSubmit={(prompt) => void startConversation(prompt)}
+        />
         {waiting && <text fg={theme.muted}>正在创建对话…</text>}
         {error && <text fg={theme.error}>{error.message}</text>}
         <text>Server: {serverStatusLabels[serverStatus]}</text>

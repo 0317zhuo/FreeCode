@@ -18,7 +18,7 @@ export const aiRoutePath = "/ai";
 export const aiRoutes = new Hono<ServerEnv>().post(
   aiRoutePath,
   zValidator("json", chatRequestSchema, (result, c) => {
-    if (!result.success) return c.json({ error: "对话 ID、请求 ID 或消息格式无效。" }, 400);
+    if (!result.success) return c.json({ error: "对话 ID、请求 ID、模式或消息格式无效。" }, 400);
   }),
   async (c) => {
     const input = c.req.valid("json");
@@ -26,7 +26,6 @@ export const aiRoutes = new Hono<ServerEnv>().post(
     try {
       const messages = await validateUIMessages({
         messages: [input.message],
-        tools: c.env.runtime.tools,
       });
       const lastMessage = messages[0];
       if (
@@ -49,6 +48,7 @@ export const aiRoutes = new Hono<ServerEnv>().post(
         input.requestId,
         message,
         c.env.runtime,
+        input.mode,
       );
       if (!result.ok) return new Response(result.error, { status: 500 });
       return createUIMessageStreamResponse({

@@ -54,7 +54,7 @@ test("读取工具逐步显示准备、等待、完成与失败状态，并能�
   act(() => update({ ...initial, state: "output-available", input, output: { text: "测试内容" } }));
   await testSetup.flush();
   expect(testSetup.captureCharFrame()).toContain("[工具: readFile] 已完成");
-  act(() => testSetup?.mockInput.pressTab());
+  act(() => testSetup?.mockInput.pressTab({ shift: true }));
   await testSetup.flush();
   act(() => testSetup?.mockInput.pressEnter());
   await testSetup.flush();
@@ -189,7 +189,7 @@ test("推理直接显示，角色与内容紧凑排列，工具详情仍可用�
   ]);
   expect(testSetup.captureCharFrame()).not.toContain("输入");
 
-  act(() => testSetup?.mockInput.pressTab());
+  act(() => testSetup?.mockInput.pressTab({ shift: true }));
   await testSetup.flush();
   act(() => testSetup?.mockInput.pressEnter());
   await testSetup.flush();

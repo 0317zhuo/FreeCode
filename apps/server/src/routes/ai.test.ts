@@ -1,5 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { parseJsonEventStream, type UIMessageChunk, uiMessageChunkSchema } from "ai";
+import serverApp from "../app";
 import { getDb } from "../db/client";
 import { cancelActiveGenerations } from "../features/conversations/generationRuntime";
 import {
@@ -8,6 +9,7 @@ import {
   getConversation,
   saveGeneration,
 } from "../features/conversations/store";
+import { createServerRuntime } from "../runtime";
 import { testApp as app, testRuntime } from "./testApp";
 
 if (process.env.FREECODE_DB_TEST !== "1")
@@ -52,7 +54,7 @@ test("缺少真实模型密钥时返回配置错误", async () => {
   }
 });
 
-test("编码工具执行结果回传模型，流与历史保存工具记录", async () => {
+test("编码工具保存完整历史，切换只读后过滤写工具上下文，再切回构建恢复权限", async () => {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "test-key";
   const requests: { tools: { function: { name: string } }[]; messages: unknown[] }[] = [];
@@ -172,6 +174,186 @@ test("编码工具执行结果回传模型，流与历史保存工具记录", as
         expect.objectContaining({ type: "tool-readFile", state: "output-available" }),
       ]),
     );
+    const readonlyResponse = await app.request("/ai", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: id,
+        requestId: "readonly",
+        message: userMessage("分析修改后的项目"),
+        mode: "readOnly",
+      }),
+    });
+    expect(readonlyResponse.status).toBe(200);
+    await readonlyResponse.text();
+    expect(requests[4]?.tools.map((item) => item.function.name).sort()).toEqual([
+      "listDirectory",
+      "readFile",
+      "searchFiles",
+    ]);
+    const readonlyContext = JSON.stringify(requests[4]?.messages);
+    expect(readonlyContext).toContain("当前为只读模式");
+    expect(readonlyContext).not.toContain("当前为构建模式");
+    for (const name of ["createFile", "editFile", "bash", "addNumbers"]) {
+      expect(readonlyContext).not.toContain(name);
+    }
+    expect(readonlyContext).toContain("readFile");
+    const restored = await getConversation(id, testRuntime.workspaceRoot);
+    expect(
+      restored.messages.find((message) => message.id === saved.messages.at(-1)?.id)?.parts,
+    ).toEqual(saved.messages.at(-1)?.parts);
+
+    const buildResponse = await app.request("/ai", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: id,
+        requestId: "build-again",
+        message: userMessage("继续修改"),
+        mode: "build",
+      }),
+    });
+    expect(buildResponse.status).toBe(200);
+    await buildResponse.text();
+    expect(requests[5]?.tools.map((item) => item.function.name)).toContain("editFile");
+    expect(JSON.stringify(requests[5]?.messages)).toContain("当前为构建模式");
+    expect(JSON.stringify(requests[5]?.messages)).not.toContain("当前为只读模式");
+  } finally {
+    fetchSpy.mockRestore();
+    if (apiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = apiKey;
+  }
+});
+
+test.each(["unknown", "", null, 1])("无效模式 %s 在生成前返回 400", async (mode) => {
+  const response = await app.request("/ai", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      conversationId: crypto.randomUUID(),
+      requestId: "invalid-mode",
+      message: userMessage("读取项目"),
+      mode,
+    }),
+  });
+  expect(response.status).toBe(400);
+  expect(await response.text()).toContain("模式");
+});
+
+test("只读开聊后切到构建，模型收到六个工具并能执行创建文件", async () => {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "test-key";
+  const executions: { name: string; input: unknown }[] = [];
+  const runtime = createServerRuntime(testRuntime.workspaceRoot, testRuntime.token, {
+    async execute(name, input) {
+      executions.push({ name, input });
+      if (name !== "createFile") throw new Error("测试仅允许创建文件。");
+      return { path: "hello.md", hash: "a".repeat(64) };
+    },
+  });
+  const requests: { tools: { function: { name: string } }[]; messages: unknown[] }[] = [];
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(
+      async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        requests.push(JSON.parse(String(init?.body)));
+        const calling = requests.length === 2;
+        const delta = calling
+          ? {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "create-1",
+                  type: "function",
+                  function: {
+                    name: "createFile",
+                    arguments: JSON.stringify({ path: "hello.md", content: "hello world\n" }),
+                  },
+                },
+              ],
+            }
+          : {
+              content:
+                requests.length === 1 ? "我目前只有三个只读工具，不能创建文件。" : "文件已创建。",
+            };
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: calling ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    ),
+  );
+  try {
+    const id = await conversationId();
+    for (const mode of ["readOnly", "build"] as const) {
+      const response = await serverApp.request(
+        "/ai",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${runtime.token}` },
+          body: JSON.stringify({
+            conversationId: id,
+            requestId: mode,
+            mode,
+            message: userMessage("创建 hello.md"),
+          }),
+        },
+        { runtime },
+      );
+      expect(response.status).toBe(200);
+      await response.text();
+    }
+    expect(requests).toHaveLength(3);
+    expect(requests[0]?.tools.map((item) => item.function.name).sort()).toEqual([
+      "listDirectory",
+      "readFile",
+      "searchFiles",
+    ]);
+    expect(requests[0]?.messages).toContainEqual(
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("当前请求模式：只读（readOnly）"),
+      }),
+    );
+    for (const request of requests.slice(1)) {
+      expect(request.tools.map((item) => item.function.name).sort()).toEqual([
+        "bash",
+        "createFile",
+        "editFile",
+        "listDirectory",
+        "readFile",
+        "searchFiles",
+      ]);
+      expect(JSON.stringify(request.messages)).toContain("当前为构建模式");
+      expect(JSON.stringify(request.messages)).not.toContain("当前为只读模式");
+      expect(request.messages).toContainEqual(
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("当前请求模式：构建（build）"),
+        }),
+      );
+      expect(request.messages).toContainEqual(
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining(
+            "本轮可用工具：listDirectory、readFile、searchFiles、createFile、editFile、bash。",
+          ),
+        }),
+      );
+      expect(JSON.stringify(request.messages)).toContain(
+        "历史回答中的模式和工具能力描述仅代表当时状态",
+      );
+    }
+    // 历史中旧的能力描述仍存在，但不锁定下一轮的实际工具权限。
+    expect(JSON.stringify(requests[1]?.messages)).toContain("我目前只有三个只读工具");
+    expect(executions).toEqual([
+      { name: "createFile", input: { path: "hello.md", content: "hello world\n" } },
+    ]);
+    const saved = await getConversation(id, runtime.workspaceRoot);
+    expect(saved.runs.map((run) => run.status)).toEqual(["completed", "completed"]);
+    expect(saved.messages.at(-1)?.parts).toContainEqual(
+      expect.objectContaining({ type: "tool-createFile", state: "output-available" }),
+    );
   } finally {
     fetchSpy.mockRestore();
     if (apiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
@@ -207,7 +389,9 @@ test("请求仅允许用户文本，拒绝客户端提交工具结果", async ()
 test("智能体启动异常保存失败状态并清理运行资源", async () => {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "test-key";
-  const stream = spyOn(testRuntime.agent, "stream").mockRejectedValue(new Error("prepare failed"));
+  const stream = spyOn(testRuntime.agents.build.agent, "stream").mockRejectedValue(
+    new Error("prepare failed"),
+  );
   try {
     const id = await conversationId();
     const response = await app.request("/ai", {

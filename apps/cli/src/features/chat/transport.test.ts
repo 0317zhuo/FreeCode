@@ -68,6 +68,7 @@ test("解析跨网络块的中文增量，只提交新消息，并在请求时�
     conversationId: chatId,
     requestId: message.id,
     message,
+    mode: "build",
   });
 });
 
@@ -104,4 +105,20 @@ test("不同会话传输实例使用各自的后端地址", async () => {
     "http://127.0.0.1:4321/ai",
     "http://127.0.0.1:4322/ai",
   ]);
+});
+
+test("同一传输实例逐次发送所选模式，拒绝未知模式", async () => {
+  fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(async () => response([{ type: "finish" }]), { preconnect: fetch.preconnect }),
+  );
+  const transport = createChatTransport("http://localhost/ai", () => ({}));
+  for (const mode of ["readOnly", "build"]) {
+    await collect(await transport.sendMessages({ ...request, body: { mode } }));
+  }
+  expect(fetchSpy.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).mode)).toEqual([
+    "readOnly",
+    "build",
+  ]);
+  await expect(transport.sendMessages({ ...request, body: { mode: "unknown" } })).rejects.toThrow();
+  expect(fetchSpy.mock.calls).toHaveLength(2);
 });

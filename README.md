@@ -31,6 +31,12 @@ CLI 捕获启动目录作为工作区，自动启动只监听 `127.0.0.1` 随机
 每次启动使用独立访问令牌，RPC 和聊天请求自动携带鉴权信息，无需单独启动服务器。
 后端数据库与模型配置来自应用安装位置的 `apps/server/.env`，不加载用户项目的服务配置。
 旧 `dev:server` / `start:server` 命令不能独立启动代理；后端需要 CLI 提供工作区和令牌。
+为避免服务端错误日志覆盖 OpenTUI 界面，CLI 默认丢弃后端 `stderr`。调试时可在启动 CLI 前设置
+`FREECODE_SERVER_LOG_TO_TERMINAL=1`，将后端 `stderr` 输出到当前终端：
+
+```bash
+FREECODE_SERVER_LOG_TO_TERMINAL=1 bun run dev:cli
+```
 
 在任意项目目录运行源码入口，例如：
 
@@ -50,7 +56,7 @@ bun --no-env-file /Users/zhuo/Desktop/FreeCode/apps/cli/src/index.tsx
 | `POST /conversations` | 创建绑定当前工作区的对话，返回对话 ID |
 | `GET /conversations` | 当前工作区最近 50 条对话 |
 | `GET /conversations/:id` | 恢复当前工作区的消息、工具记录和生成状态 |
-| `POST /ai` | 接收 `{ conversationId, requestId, message }` 并返回标准 SSE 流 |
+| `POST /ai` | 接收 `{ conversationId, requestId, message, mode }` 并返回标准 SSE 流 |
 
 所有路由要求 `Authorization: Bearer <本次启动令牌>`；客户端不能指定工作区。
 不同工作区的对话读取及续聊返回 404。原有未绑定工作区的对话保留在数据库中，不自动分配工作区。
@@ -80,7 +86,32 @@ bun --no-env-file /Users/zhuo/Desktop/FreeCode/apps/cli/src/index.tsx
 
 文件工具只处理不超过 1 MiB 的 UTF-8 文本，读取和搜索内容最多保留 64 KiB。
 Bash 输出合计最多保留 64 KiB，截断后继续排空；支持真实 Bash 管道、重定向、Git、ripgrep、Bun 和基本系统命令。
-在聊天中可输入“读取 README.md 并概括项目结构”验证工具展示；按 Tab 切换到记录区，Enter 展开工具参数和结果。
+在聊天中可输入“读取 README.md 并概括项目结构”验证工具展示；按 Shift+Tab 切换到记录区，Enter 展开工具参数和结果。
+
+## 模式
+
+首页和聊天输入框左下角实时显示当前模式，按无修饰键的 `Tab` 循环切换，输入内容保持不变。
+默认使用“构建”；选择会在本次 CLI 会话的页面导航间保留，重启后恢复默认值。
+
+| 模式 | 请求标识 | 可用工具 |
+| --- | --- | --- |
+| 构建 | `build` | `listDirectory`、`readFile`、`searchFiles`、`createFile`、`editFile`、`bash` |
+| 只读 | `readOnly` | `listDirectory`、`readFile`、`searchFiles` |
+
+每条指令固定使用提交时的模式，创建对话或生成期间切换只影响之后的指令，不会中断当前请求。
+客户端只发送模式标识，服务端校验后选择对应 Agent，自动注入该模式的系统提示词和工具白名单。
+每轮系统上下文明确声明当前模式及从实际工具集合生成的可用工具清单，并说明历史中的能力描述
+仅代表当时状态；切到构建后要求使用当前工具执行文件修改，减少沿用旧只读描述导致的误判。
+提示词按通用工作规范、模式职责和当前请求能力分层：构建模式区分提问与修改请求，按读取、
+最小修改、相关验证的流程完成实现；只读模式要求基于调用链和文件位置给出调查结论与建议。
+两种模式都区分静态分析与运行验证，并如实说明失败、未执行的检查及未完成项。
+只读 Agent 不注册写入工具或 Bash，模型主动返回未授权工具调用时也无法执行。
+续聊时仅将当前模式允许的工具片段加入模型上下文；完整工具记录仍保存在历史中供界面展示。
+`POST /ai` 未传 `mode` 时兼容为 `build`，未知模式返回 400。
+
+新增模式时在 `packages/contracts/src/mode.ts` 注册标识和显示名称，再在
+`packages/agent/src/modes.ts` 配置独立提示词与显式工具白名单。Schema、Tab 顺序和服务端 Agent
+注册随配置自动扩展；TypeScript 会检查每种模式都有配置，新增工具不会自动获得权限。
 
 所有模型触发的操作在临时容器中执行，只将当前工作区非递归挂载到 `/workspace` 并直接写回原目录。
 容器禁止网络、特权与宿主进程共享，移除 capabilities，启用 no-new-privileges，使用只读根文件系统与受限临时目录，
@@ -118,7 +149,7 @@ const data = await response.json(); // 自动推导为 { status: string }
 聊天页在收到首页的提示词后自动请求模型，逐步以单色 Markdown 显示回复；角色标签统一使用紫色，
 正文使用白色，推理以灰色直接显示，工具调用默认显示一行状态摘要，失败或拒绝使用红色提示。
 可继续输入消息，按 `Enter` 发送，
-按 `Shift+Enter` 换行，按 `Tab` 在输入框与消息记录区之间切换。记录区用方向键或翻页键滚动；
+按 `Shift+Enter` 换行，按 `Tab` 切换模式，按 `Shift+Tab` 在输入框与消息记录区之间切换。记录区用方向键或翻页键滚动；
 出现工具片段时，可用 `j/k` 选择、`Enter` 逐项展开或收起输入输出，也可点击该片段切换详情。
 状态行区分连接、等待内容、生成和失败，请求失败时保留已收到的内容。当前模型开启推理，并注册了编码工具，
 因此只有实际收到相应事件时才显示推理或工具记录；离开聊天页会取消请求。

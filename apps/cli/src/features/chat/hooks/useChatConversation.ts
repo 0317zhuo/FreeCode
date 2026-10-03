@@ -1,11 +1,16 @@
 import { useChat } from "@ai-sdk/react";
+import { type AgentMode, defaultAgentMode } from "@freecode/contracts";
 import { useEffect, useRef, useState } from "react";
 import { readConversation, type SavedConversation } from "../../../lib/conversationApi";
 import { rpc, serverHeaders } from "../../../lib/rpc";
 import { createChatTransport } from "../transport";
 
 /** 管理一次聊天会话的流式消息；进入页面时自动发送首页传入的提示词。 */
-export function useChatConversation(conversation: SavedConversation, prompt?: string) {
+export function useChatConversation(
+  conversation: SavedConversation,
+  prompt?: string,
+  promptMode: AgentMode = defaultAgentMode,
+) {
   const [transport] = useState(() => createChatTransport(rpc.ai.$url().href, () => serverHeaders));
   const [runs, setRuns] = useState(conversation.runs);
   const [syncError, setSyncError] = useState<Error>();
@@ -34,14 +39,14 @@ export function useChatConversation(conversation: SavedConversation, prompt?: st
     loadController.current = controller;
     if (prompt && !sentInitialPrompt.current) {
       sentInitialPrompt.current = true;
-      void sendMessage({ text: prompt });
+      void sendMessage({ text: prompt }, { body: { mode: promptMode } });
     }
     return () => {
       controller.abort();
       loadController.current = null;
       void stop();
     };
-  }, [sendMessage, stop, prompt]);
+  }, [sendMessage, stop, prompt, promptMode]);
 
   const remoteBusy = runs.some((run) => run.status === "running");
   useEffect(() => {

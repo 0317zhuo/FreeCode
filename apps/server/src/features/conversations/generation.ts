@@ -1,5 +1,8 @@
+import type { AgentMode } from "@freecode/contracts";
 import {
   convertToModelMessages,
+  getToolName,
+  isToolUIPart,
   type ModelMessage,
   readUIMessageStream,
   toUIMessageStream,
@@ -21,7 +24,9 @@ export async function generateConversation(
   requestId: string,
   message: UIMessage,
   runtime: ServerRuntime,
+  mode: AgentMode,
 ) {
+  const { agent, tools } = runtime.agents[mode];
   const { run, outputMessageId, history } = await beginGeneration(
     conversationId,
     requestId,
@@ -34,9 +39,17 @@ export async function generateConversation(
   const configurationError = runtime.provider.configurationError();
   try {
     if (configurationError) throw new Error(configurationError);
-    messages = await convertToModelMessages(
-      await validateUIMessages({ messages: history, tools: runtime.tools }),
-    );
+    const validated = await validateUIMessages({ messages: history });
+    // 保留完整持久化记录，仅过滤本轮模型上下文中的未授权工具片段。
+    const context = validated
+      .map((message) => ({
+        ...message,
+        parts: message.parts.filter(
+          (part) => !isToolUIPart(part) || Object.hasOwn(tools, getToolName(part)),
+        ),
+      }))
+      .filter((message) => message.parts.length > 0);
+    messages = await convertToModelMessages(await validateUIMessages({ messages: context, tools }));
   } catch {
     const text = configurationError ?? "已保存的模型上下文格式无效，请检查服务端。";
     await saveGeneration(run.id, outputMessageId, latest, {
@@ -67,9 +80,9 @@ export async function generateConversation(
   };
   const timer = setInterval(checkpoint, 1_000);
 
-  let result: Awaited<ReturnType<typeof runtime.agent.stream>>;
+  let result: Awaited<ReturnType<typeof agent.stream>>;
   try {
-    result = await runtime.agent.stream({
+    result = await agent.stream({
       messages,
       abortSignal: signal,
       timeout: generationTimeoutMs,
@@ -98,7 +111,7 @@ export async function generateConversation(
 
   const uiStream = toUIMessageStream({
     stream: result.stream,
-    tools: runtime.tools,
+    tools,
     onError: (error) => {
       runtime.provider.logError(error);
       return runtime.provider.describeError(error);

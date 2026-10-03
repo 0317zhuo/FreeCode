@@ -7,3 +7,4 @@ export {
   type GenerationStatus,
   generationStatusSchema,
 } from "./conversation";
+export { type AgentMode, agentModeSchema, agentModes, defaultAgentMode } from "./mode";

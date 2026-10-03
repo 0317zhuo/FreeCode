@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentModeSchema, defaultAgentMode } from "./mode";
 
 export const conversationReferenceSchema = z.object({ id: z.uuid() });
 export const conversationSummarySchema = conversationReferenceSchema.extend({
@@ -34,4 +35,5 @@ export const chatRequestSchema = z.object({
   conversationId: z.uuid(),
   requestId: z.string().min(1).max(128),
   message: z.unknown(),
+  mode: agentModeSchema.default(defaultAgentMode),
 });

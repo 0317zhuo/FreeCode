@@ -57,6 +57,189 @@ afterEach(() => {
   requests.length = 0;
 });
 
+test("Tab 循环切换模式，输入保持不变，首页与聊天请求使用各自发送时的模式", async () => {
+  const sent: { mode: string; message: { parts: { text: string }[] } }[] = [];
+  mockRequests((init) => {
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response("测试错误", { status: 500 });
+  });
+  testSetup = await testRender(<App onQuit={() => {}} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await act(async () => {
+    await testSetup?.flush();
+  });
+  expect(testSetup.captureCharFrame()).toContain("模式：构建");
+  await act(async () => {
+    await testSetup?.mockInput.typeText("第一条");
+    testSetup?.mockInput.pressTab();
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：只读");
+  expect(testSetup.captureCharFrame()).toContain("第一条");
+  await act(async () => {
+    testSetup?.mockInput.pressEnter();
+    await Bun.sleep(20);
+  });
+  await testSetup.flush();
+  expect(sent[0]?.mode).toBe("readOnly");
+  expect(sent[0]?.message.parts[0]?.text).toBe("第一条");
+  expect(testSetup.captureCharFrame()).toContain("模式：只读");
+
+  await act(async () => {
+    await testSetup?.mockInput.typeText("继续构建");
+    testSetup?.mockInput.pressTab();
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：构建");
+  await act(async () => {
+    testSetup?.mockInput.pressEnter();
+    await Bun.sleep(20);
+  });
+  expect(sent[1]?.mode).toBe("build");
+  expect(sent[1]?.message.parts[0]?.text).toBe("继续构建");
+
+  await act(async () => {
+    testSetup?.mockInput.pressTab({ shift: true });
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：构建");
+  await act(async () => {
+    testSetup?.mockInput.pressTab();
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：只读");
+  await act(async () => {
+    testSetup?.mockInput.pressTab({ shift: true });
+  });
+  await testSetup.flush();
+  await act(async () => {
+    await testSetup?.mockInput.typeText("第三条");
+    testSetup?.mockInput.pressEnter();
+    await Bun.sleep(20);
+  });
+  expect(sent[2]?.mode).toBe("readOnly");
+  expect(sent[2]?.message.parts[0]?.text).toBe("第三条");
+});
+
+test("带修饰键的 Tab 不切换模式，Esc 与 Ctrl+C 仍能退出", async () => {
+  mockRequests();
+  let quits = 0;
+  testSetup = await testRender(<App onQuit={() => quits++} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+    exitOnCtrlC: false,
+  });
+  await act(async () => {
+    for (let mask = 1; mask < 16; mask++) {
+      testSetup?.mockInput.pressTab({
+        shift: Boolean(mask & 1),
+        ctrl: Boolean(mask & 2),
+        meta: Boolean(mask & 4),
+        super: Boolean(mask & 8),
+      });
+    }
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：构建");
+  act(() => testSetup?.mockInput.pressKey("ESCAPE"));
+  act(() => testSetup?.mockInput.pressKey("c", { ctrl: true }));
+  expect(quits).toBe(2);
+});
+
+test("只读首轮正常完成后切换构建，续聊请求携带构建模式且保留前文", async () => {
+  const sent: { conversationId: string; mode: string; message: { parts: { text: string }[] } }[] =
+    [];
+  mockRequests((init) => {
+    sent.push(JSON.parse(String(init?.body)));
+    const text = sent.length === 1 ? "只读轮已完成，无法创建文件。" : "构建轮已完成。";
+    return new Response(
+      [
+        { type: "start", messageId: `reply-${sent.length}` },
+        { type: "text-start", id: "text" },
+        { type: "text-delta", id: "text", delta: text },
+        { type: "text-end", id: "text" },
+        { type: "finish", finishReason: "stop" },
+      ]
+        .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+        .join(""),
+      { headers: { "content-type": "text/event-stream", "x-vercel-ai-ui-message-stream": "v1" } },
+    );
+  });
+  testSetup = await testRender(<App onQuit={() => {}} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await act(async () => {
+    testSetup?.mockInput.pressTab();
+    await testSetup?.flush();
+  });
+  await act(async () => {
+    await testSetup?.mockInput.typeText("请创建文件");
+    testSetup?.mockInput.pressEnter();
+    await Bun.sleep(20);
+  });
+  await testSetup.waitForFrame((frame) => frame.includes("只读轮已完成"));
+  expect(sent[0]?.mode).toBe("readOnly");
+  act(() => testSetup?.mockInput.pressTab());
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：构建");
+  await act(async () => {
+    await testSetup?.mockInput.typeText("现在创建文件");
+    testSetup?.mockInput.pressEnter();
+    await Bun.sleep(20);
+  });
+  await testSetup.waitForFrame((frame) => frame.includes("构建轮已完成"));
+  expect(sent).toHaveLength(2);
+  expect(sent[1]?.mode).toBe("build");
+  expect(sent[1]?.conversationId).toBe(sent[0]?.conversationId);
+  expect(sent[1]?.message.parts[0]?.text).toBe("现在创建文件");
+  expect(testSetup.captureCharFrame()).toContain("只读轮已完成");
+});
+
+test("创建对话期间切换模式，首条指令保留提交时的模式", async () => {
+  let complete!: (response: Response) => void;
+  let sentMode: string | undefined;
+  mockRequests(
+    (init) => {
+      sentMode = JSON.parse(String(init?.body)).mode;
+      return new Response("测试错误", { status: 500 });
+    },
+    false,
+    () =>
+      new Promise<Response>((resolve) => {
+        complete = resolve;
+      }),
+  );
+  testSetup = await testRender(<App onQuit={() => {}} />, {
+    width: 120,
+    height: 40,
+    kittyKeyboard: true,
+  });
+  await act(async () => {
+    testSetup?.mockInput.pressTab();
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：只读");
+  await act(async () => {
+    await testSetup?.mockInput.typeText("只读指令");
+    testSetup?.mockInput.pressEnter();
+    await Bun.sleep(20);
+    testSetup?.mockInput.pressTab();
+  });
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：构建");
+  await act(async () => {
+    complete(Response.json({ id, title: null }, { status: 201 }));
+    await Bun.sleep(20);
+  });
+  expect(sentMode).toBe("readOnly");
+});
+
 test("首页提交提示词后进入聊天页，输入 q 不触发退出", async () => {
   mockRequests();
   let quitCount = 0;
@@ -223,7 +406,13 @@ test("流式显示增量，只提交新消息，卸载时取消请求", async ()
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
   let signal: AbortSignal | null | undefined;
   let request:
-    | { conversationId: string; requestId: string; message: { id: string }; messages?: unknown }
+    | {
+        conversationId: string;
+        requestId: string;
+        message: { id: string };
+        messages?: unknown;
+        mode: string;
+      }
     | undefined;
   const emit = (chunk: object) =>
     streamController?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
@@ -254,6 +443,7 @@ test("流式显示增量，只提交新消息，卸载时取消请求", async ()
   expect(request?.conversationId).toBe(id);
   expect(request?.requestId).toBe(request?.message.id);
   expect(request?.messages).toBeUndefined();
+  expect(request?.mode).toBe("build");
   await act(async () => {
     emit({ type: "start", messageId: "a1" });
     emit({ type: "text-start", id: "text" });
@@ -262,6 +452,11 @@ test("流式显示增量，只提交新消息，卸载时取消请求", async ()
   });
   await testSetup.flush();
   expect(testSetup.captureCharFrame()).toContain("第一部分");
+  act(() => testSetup?.mockInput.pressTab());
+  await testSetup.flush();
+  expect(testSetup.captureCharFrame()).toContain("模式：只读");
+  expect(request?.mode).toBe("build");
+  expect(signal?.aborted).toBe(false);
   await act(async () => {
     emit({ type: "text-delta", id: "text", delta: "第二部分" });
     await Bun.sleep(20);

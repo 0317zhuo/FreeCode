@@ -9,6 +9,7 @@ export async function startLocalServer(workspace: string, signal?: AbortSignal) 
   const workspaceRoot = await realpath(workspace);
   const token = crypto.randomUUID() + crypto.randomUUID();
   const applicationRoot = resolve(import.meta.dir, "../../../server");
+  const showServerLogs = process.env.FREECODE_SERVER_LOG_TO_TERMINAL === "1";
   const env: Record<string, string> = { FREECODE_LOCAL_TOKEN: token };
   // 只传入可信运行环境；不转发用户项目自动加载的模型、数据库或其他业务配置。
   for (const name of [
@@ -34,7 +35,13 @@ export async function startLocalServer(workspace: string, signal?: AbortSignal) 
       "--parent-pid",
       String(process.pid),
     ],
-    { cwd: applicationRoot, env, stdin: "ignore", stdout: "pipe", stderr: "inherit" },
+    {
+      cwd: applicationRoot,
+      env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: showServerLogs ? "inherit" : "ignore",
+    },
   );
   let closing: Promise<void> | undefined;
   const stop = () =>

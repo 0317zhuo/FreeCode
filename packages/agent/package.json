@@ -12,6 +12,7 @@
     "typecheck": "bun run --bun tsc --noEmit"
   },
   "dependencies": {
+    "@freecode/contracts": "workspace:*",
     "ai": "7.0.122",
     "zod": "4.6.5"
   }
