@@ -1,86 +1,53 @@
-import { deepSeek } from "@ai-sdk/deepseek";
 import {
-  APICallError,
-  consumeStream,
   convertToModelMessages,
-  createUIMessageStreamResponse,
-  isStepCount,
   type ModelMessage,
-  RetryError,
   readUIMessageStream,
-  StreamProviderError,
-  streamText,
   toUIMessageStream,
   type UIMessage,
   validateUIMessages,
 } from "ai";
-import { chatTools } from "./chatTools";
-import { beginGeneration, saveGeneration } from "./conversationStore";
+import type { ServerRuntime } from "../../runtime";
 import { activeGenerations } from "./generationRuntime";
-
-/** 把 DeepSeek 的失败原因映射成可以直接展示给用户的中文提示。 */
-function describeError(error: unknown) {
-  const cause = RetryError.isInstance(error) ? error.lastError : error;
-
-  if (APICallError.isInstance(cause) || StreamProviderError.isInstance(cause)) {
-    if (cause.statusCode === 401 || cause.statusCode === 403)
-      return "DeepSeek 鉴权失败，请检查服务端 API 密钥。";
-    if (cause.statusCode === 402) return "DeepSeek 余额不足，请检查账户余额。";
-    if (cause.statusCode === 429) return "DeepSeek 请求过于频繁，请稍后重试。";
-  }
-
-  return "模型生成失败，请检查服务端配置或稍后重试。";
-}
-
-/** 服务端日志只记录错误名称和状态码，避免把密钥或请求内容写进日志。 */
-function logError(error: unknown) {
-  const cause = RetryError.isInstance(error) ? error.lastError : error;
-
-  console.error("DeepSeek 流式生成失败", {
-    name: cause instanceof Error ? cause.name : "UnknownError",
-    status:
-      APICallError.isInstance(cause) || StreamProviderError.isInstance(cause)
-        ? cause.statusCode
-        : undefined,
-  });
-}
+import { beginGeneration, saveGeneration } from "./store";
+import { generationTimeoutMs } from "./timing";
 
 /**
- * 调用 DeepSeek 并把模型输出转成 UI Message 流；
- * 客户端断开由 `request.signal` 中止生成，生成总超时为 60 秒。
+ * 编排模型生成与持久化，向路由返回 SDK 消息流；
+ * 客户端断开通过 `requestSignal` 中止生成，生成总超时为 180 秒。
  */
-export async function streamCompletion(
-  request: Request,
+export async function generateConversation(
+  requestSignal: AbortSignal,
   conversationId: string,
   requestId: string,
   message: UIMessage,
+  runtime: ServerRuntime,
 ) {
   const { run, outputMessageId, history } = await beginGeneration(
     conversationId,
     requestId,
     message,
+    runtime.workspaceRoot,
+    runtime.provider.identity,
   );
   let latest: UIMessage = { id: outputMessageId, role: "assistant", parts: [] };
   let messages: ModelMessage[];
+  const configurationError = runtime.provider.configurationError();
   try {
-    if (!process.env.DEEPSEEK_API_KEY?.trim()) throw new Error("missing_api_key");
+    if (configurationError) throw new Error(configurationError);
     messages = await convertToModelMessages(
-      await validateUIMessages({ messages: history, tools: chatTools }),
+      await validateUIMessages({ messages: history, tools: runtime.tools }),
     );
-  } catch (error) {
-    const text =
-      error instanceof Error && error.message === "missing_api_key"
-        ? "服务端未配置 DEEPSEEK_API_KEY，请填写 apps/server/.env 并重启服务。"
-        : "已保存的模型上下文格式无效，请检查服务端。";
+  } catch {
+    const text = configurationError ?? "已保存的模型上下文格式无效，请检查服务端。";
     await saveGeneration(run.id, outputMessageId, latest, {
       status: "failed",
       error: { code: "configuration", message: text },
     });
-    return new Response(text, { status: 500 });
+    return { ok: false as const, error: text };
   }
 
   const controller = new AbortController();
-  const signal = AbortSignal.any([request.signal, controller.signal]);
+  const signal = AbortSignal.any([requestSignal, controller.signal]);
   let resolveFinished!: () => void;
   const finished = new Promise<void>((resolve) => {
     resolveFinished = resolve;
@@ -100,31 +67,49 @@ export async function streamCompletion(
   };
   const timer = setInterval(checkpoint, 1_000);
 
-  const result = streamText({
-    model: deepSeek("deepseek-flash"),
-    messages,
-    instructions: "需要计算两个整数相加时，调用 addNumbers 工具，并根据工具结果回答。",
-    tools: chatTools,
-    stopWhen: isStepCount(3),
-    reasoning: "high",
-    abortSignal: signal,
-    timeout: 60_000,
-    onError({ error }) {
-      logError(error);
-    },
-  });
+  let result: Awaited<ReturnType<typeof runtime.agent.stream>>;
+  try {
+    result = await runtime.agent.stream({
+      messages,
+      abortSignal: signal,
+      timeout: generationTimeoutMs,
+    });
+  } catch (error) {
+    clearInterval(timer);
+    controller.abort();
+    const status = requestSignal.aborted ? "cancelled" : "failed";
+    const text =
+      status === "cancelled"
+        ? "生成已取消，已保留生成内容。"
+        : runtime.provider.describeError(error);
+    try {
+      await queue;
+      runtime.provider.logError(error);
+      await saveGeneration(run.id, outputMessageId, latest, {
+        status,
+        error: { code: status, message: text },
+      });
+    } finally {
+      activeGenerations.delete(run.id);
+      resolveFinished();
+    }
+    return { ok: false as const, error: text };
+  }
 
   const uiStream = toUIMessageStream({
     stream: result.stream,
-    tools: chatTools,
-    onError: describeError,
+    tools: runtime.tools,
+    onError: (error) => {
+      runtime.provider.logError(error);
+      return runtime.provider.describeError(error);
+    },
     generateMessageId: () => outputMessageId,
     async onEnd({ responseMessage, outcome, finishReason }) {
       clearInterval(timer);
       try {
         await queue;
         const cancelled =
-          request.signal.aborted || (controller.signal.aborted && !persistenceFailed);
+          requestSignal.aborted || (controller.signal.aborted && !persistenceFailed);
         const status = persistenceFailed
           ? "failed"
           : outcome.status === "completed"
@@ -145,7 +130,7 @@ export async function streamCompletion(
                     : persistenceFailed
                       ? "数据库写入失败，生成已停止。"
                       : outcome.status === "failed"
-                        ? describeError(outcome.error)
+                        ? runtime.provider.describeError(outcome.error)
                         : "生成中断或超时，已保留生成内容。",
               };
         await saveGeneration(run.id, outputMessageId, responseMessage, {
@@ -169,5 +154,5 @@ export async function streamCompletion(
       controller.abort();
     }
   })();
-  return createUIMessageStreamResponse({ consumeSseStream: consumeStream, stream: clientStream });
+  return { ok: true as const, stream: clientStream };
 }

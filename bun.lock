@@ -15,6 +15,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-sdk/react": "4.0.125",
+        "@freecode/contracts": "workspace:*",
         "@opentui/core": "0.5.12",
         "@opentui/react": "0.5.12",
         "ai": "7.0.122",
@@ -33,6 +34,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-sdk/deepseek": "3.0.56",
+        "@freecode/agent": "workspace:*",
+        "@freecode/contracts": "workspace:*",
         "@hono/zod-validator": "0.9.1",
         "@prisma/adapter-pg": "7.10.0",
         "@prisma/client": "7.10.0",
@@ -46,6 +49,21 @@
         "@hono/cli": "0.2.0-next.9",
         "@types/pg": "8.23.1",
         "prisma": "7.10.0",
+      },
+    },
+    "packages/agent": {
+      "name": "@freecode/agent",
+      "version": "0.1.0",
+      "dependencies": {
+        "ai": "7.0.122",
+        "zod": "4.6.5",
+      },
+    },
+    "packages/contracts": {
+      "name": "@freecode/contracts",
+      "version": "0.1.0",
+      "dependencies": {
+        "zod": "4.6.5",
       },
     },
   },
@@ -138,7 +156,11 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
 
+    "@freecode/agent": ["@freecode/agent@workspace:packages/agent"],
+
     "@freecode/cli": ["@freecode/cli@workspace:apps/cli"],
+
+    "@freecode/contracts": ["@freecode/contracts@workspace:packages/contracts"],
 
     "@freecode/server": ["@freecode/server@workspace:apps/server"],
 

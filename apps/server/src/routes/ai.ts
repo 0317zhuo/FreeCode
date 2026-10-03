@@ -1,16 +1,21 @@
+import { chatRequestSchema } from "@freecode/contracts";
 import { zValidator } from "@hono/zod-validator";
-import { type UIMessage, validateUIMessages } from "ai";
+import {
+  consumeStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+  validateUIMessages,
+} from "ai";
 import { Hono } from "hono";
-import { chatRequestSchema } from "../features/ai/chatRequestSchema";
-import { chatTools } from "../features/ai/chatTools";
-import { ConversationError } from "../features/ai/conversationStore";
-import { streamCompletion } from "../features/ai/streamCompletion";
+import { generateConversation } from "../features/conversations/generation";
+import { ConversationError } from "../features/conversations/store";
+import type { ServerEnv } from "../runtime";
 
 /** `POST /ai` 的路径，入口按路径判断 SSE 连接是否需要取消超时。 */
 export const aiRoutePath = "/ai";
 
 /** 聊天补全路由：校验请求体与消息历史后返回流式响应。 */
-export const aiRoutes = new Hono().post(
+export const aiRoutes = new Hono<ServerEnv>().post(
   aiRoutePath,
   zValidator("json", chatRequestSchema, (result, c) => {
     if (!result.success) return c.json({ error: "对话 ID、请求 ID 或消息格式无效。" }, 400);
@@ -21,7 +26,7 @@ export const aiRoutes = new Hono().post(
     try {
       const messages = await validateUIMessages({
         messages: [input.message],
-        tools: chatTools,
+        tools: c.env.runtime.tools,
       });
       const lastMessage = messages[0];
       if (
@@ -38,7 +43,18 @@ export const aiRoutes = new Hono().post(
       return c.json({ error: "消息格式无效。" }, 400);
     }
     try {
-      return await streamCompletion(c.req.raw, input.conversationId, input.requestId, message);
+      const result = await generateConversation(
+        c.req.raw.signal,
+        input.conversationId,
+        input.requestId,
+        message,
+        c.env.runtime,
+      );
+      if (!result.ok) return new Response(result.error, { status: 500 });
+      return createUIMessageStreamResponse({
+        consumeSseStream: consumeStream,
+        stream: result.stream,
+      });
     } catch (error) {
       if (error instanceof ConversationError) return c.json({ error: error.message }, error.status);
       console.error("聊天请求失败", error instanceof Error ? error.name : "UnknownError");

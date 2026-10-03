@@ -1,6 +1,8 @@
+import { conversationSchema, type GenerationStatus } from "@freecode/contracts";
 import type { UIMessage } from "ai";
 import { getDb } from "../../db/client";
-import { type GenerationStatus, Prisma } from "../../generated/prisma/client";
+import { Prisma } from "../../generated/prisma/client";
+import { interruptedAfterMs } from "./timing";
 
 export class ConversationError extends Error {
   constructor(
@@ -14,13 +16,14 @@ export class ConversationError extends Error {
 export const jsonValue = (value: unknown) =>
   JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
-/** 60 秒生成超时之外留出余量，只回收失去心跳的运行记录。 */
-export async function recoverInterrupted(conversationId?: string) {
+/** 180 秒生成超时之外留出余量，只回收失去心跳的运行记录。 */
+export async function recoverInterrupted(workspaceRoot: string, conversationId?: string) {
   await getDb().generationRun.updateMany({
     where: {
       conversationId,
+      conversation: { workspaceRoot },
       status: "running",
-      heartbeatAt: { lt: new Date(Date.now() - 90_000) },
+      heartbeatAt: { lt: new Date(Date.now() - interruptedAfterMs) },
     },
     data: {
       status: "interrupted",
@@ -30,27 +33,28 @@ export async function recoverInterrupted(conversationId?: string) {
   });
 }
 
-export async function createConversation() {
-  return getDb().conversation.create({ data: {} });
+export async function createConversation(workspaceRoot: string) {
+  return getDb().conversation.create({ data: { workspaceRoot } });
 }
 
-export async function listConversations() {
-  await recoverInterrupted();
+export async function listConversations(workspaceRoot: string) {
+  await recoverInterrupted(workspaceRoot);
   return getDb().conversation.findMany({
+    where: { workspaceRoot },
     orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
     take: 50,
     select: { id: true, title: true, createdAt: true, lastActivityAt: true },
   });
 }
 
-export async function getConversation(id: string) {
-  await recoverInterrupted(id);
+export async function getConversation(id: string, workspaceRoot: string) {
+  await recoverInterrupted(workspaceRoot, id);
   const conversation = await getDb().conversation.findUnique({
-    where: { id },
+    where: { id, workspaceRoot },
     include: { messages: { orderBy: { seq: "asc" } }, runs: { orderBy: { startedAt: "asc" } } },
   });
   if (!conversation) throw new ConversationError("对话不存在。", 404);
-  return {
+  const data = {
     id: conversation.id,
     title: conversation.title,
     messages: conversation.messages.map(({ id, role, parts, metadata }) => ({
@@ -67,6 +71,8 @@ export async function getConversation(id: string) {
       finishReason,
     })),
   };
+  conversationSchema.parse(data);
+  return data;
 }
 
 /** 锁住对话后分配顺序号、保存输入并预留输出；索引约束跨进程并发。 */
@@ -74,11 +80,13 @@ export async function beginGeneration(
   conversationId: string,
   requestId: string,
   message: UIMessage,
+  workspaceRoot: string,
+  model: { provider: string; model: string },
 ) {
-  await recoverInterrupted(conversationId);
+  await recoverInterrupted(workspaceRoot, conversationId);
   return getDb().$transaction(async (tx) => {
     const rows = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM conversations WHERE id = ${conversationId}::uuid FOR UPDATE
+      SELECT id FROM conversations WHERE id = ${conversationId}::uuid AND workspace_root = ${workspaceRoot} FOR UPDATE
     `;
     if (!rows.length) throw new ConversationError("对话不存在。", 404);
     if (
@@ -135,8 +143,8 @@ export async function beginGeneration(
         requestId,
         inputMessageId: message.id,
         outputMessageId,
-        provider: "deepseek",
-        model: "deepseek-flash",
+        provider: model.provider,
+        model: model.model,
       },
     });
     return {

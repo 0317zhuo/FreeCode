@@ -1,20 +1,20 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { parseJsonEventStream, type UIMessageChunk, uiMessageChunkSchema } from "ai";
-import app from "../app";
 import { getDb } from "../db/client";
+import { cancelActiveGenerations } from "../features/conversations/generationRuntime";
 import {
   beginGeneration,
   createConversation,
   getConversation,
   saveGeneration,
-} from "../features/ai/conversationStore";
-import { cancelActiveGenerations } from "../features/ai/generationRuntime";
+} from "../features/conversations/store";
+import { testApp as app, testRuntime } from "./testApp";
 
 if (process.env.FREECODE_DB_TEST !== "1")
   throw new Error("请使用 bun run test 连接独立测试数据库。");
 const ownedIds: string[] = [];
 async function conversationId() {
-  const conversation = await createConversation();
+  const conversation = await createConversation(testRuntime.workspaceRoot);
   ownedIds.push(conversation.id);
   return conversation.id;
 }
@@ -52,49 +52,53 @@ test("缺少真实模型密钥时返回配置错误", async () => {
   }
 });
 
-test("工具定义随提示词发送，执行结果传回模型后继续输出回答", async () => {
+test("编码工具执行结果回传模型，流与历史保存工具记录", async () => {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   process.env.DEEPSEEK_API_KEY = "test-key";
-  const requests: { tools: unknown; messages: unknown[] }[] = [];
+  const requests: { tools: { function: { name: string } }[]; messages: unknown[] }[] = [];
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
     Object.assign(
-      async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
         requests.push(JSON.parse(String(init?.body)));
-        const callingTool = requests.length === 1;
-        const delta = callingTool
+        const calls = [
+          { name: "readFile", arguments: JSON.stringify({ path: "README.md" }) },
+          {
+            name: "editFile",
+            arguments: JSON.stringify({
+              path: "README.md",
+              hash: "a".repeat(64),
+              oldText: "测试文件",
+              newText: "更新文件",
+            }),
+          },
+          { name: "bash", arguments: JSON.stringify({ command: "echo verified" }) },
+        ];
+        const call = calls[requests.length - 1];
+        const calling = call !== undefined;
+        const delta = calling
           ? {
               tool_calls: [
-                {
-                  index: 0,
-                  id: "add-1",
-                  type: "function",
-                  function: { name: "addNumbers", arguments: '{"a":123,"b":456}' },
-                },
+                { index: 0, id: `call-${requests.length}`, type: "function", function: call },
               ],
             }
-          : { content: "123 + 456 = 579。" };
-        const chunks = [
-          { choices: [{ index: 0, delta, finish_reason: null }] },
-          {
-            choices: [{ index: 0, delta: {}, finish_reason: callingTool ? "tool_calls" : "stop" }],
-            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-          },
-        ];
+          : { content: "已修改并通过验证。" };
         return new Response(
-          `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("")}data: [DONE]\n\n`,
-          {
-            headers: { "content-type": "text/event-stream" },
-          },
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: calling ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
         );
       },
       { preconnect: globalThis.fetch.preconnect },
     ),
   );
-
   try {
-    const prompt = "请调用 addNumbers 工具计算 123 + 456。";
     const id = await conversationId();
-    const previous = await beginGeneration(id, "previous", userMessage("计算 1 + 2"));
+    const previous = await beginGeneration(
+      id,
+      "previous",
+      userMessage("之前的工具测试"),
+      testRuntime.workspaceRoot,
+      testRuntime.provider.identity,
+    );
     await saveGeneration(
       previous.run.id,
       previous.outputMessageId,
@@ -104,7 +108,7 @@ test("工具定义随提示词发送，执行结果传回模型后继续输出�
         parts: [
           {
             type: "tool-addNumbers",
-            toolCallId: "add-0",
+            toolCallId: "old-1",
             state: "output-available",
             input: { a: 1, b: 2 },
             output: { result: 3 },
@@ -119,10 +123,10 @@ test("工具定义随提示词发送，执行结果传回模型后继续输出�
       body: JSON.stringify({
         conversationId: id,
         requestId: "current",
-        message: userMessage(prompt),
+        message: userMessage("读取 README.md"),
       }),
     });
-    if (!response.body) throw new Error("响应没有流内容");
+    if (!response.body) throw new Error("无响应流");
     const chunks: UIMessageChunk[] = [];
     for await (const chunk of parseJsonEventStream({
       stream: response.body,
@@ -131,43 +135,41 @@ test("工具定义随提示词发送，执行结果传回模型后继续输出�
       if (!chunk.success) throw chunk.error;
       chunks.push(chunk.value);
     }
-
     expect(response.status).toBe(200);
-    expect(requests).toHaveLength(2);
-    expect(requests[0]?.tools).toMatchObject([
-      { type: "function", function: { name: "addNumbers", parameters: { type: "object" } } },
-    ]);
-    expect(requests[0]?.messages).toContainEqual({ role: "user", content: prompt });
-    expect(requests[0]?.messages).toContainEqual(
-      expect.objectContaining({ role: "tool", tool_call_id: "add-0", content: '{"result":3}' }),
+    expect(requests).toHaveLength(4);
+    expect(requests[0]?.tools.map((item) => item.function.name)).toEqual(
+      expect.arrayContaining([
+        "listDirectory",
+        "readFile",
+        "searchFiles",
+        "createFile",
+        "editFile",
+        "bash",
+      ]),
     );
+    expect(requests[0]?.tools.map((item) => item.function.name)).not.toContain("addNumbers");
     expect(requests[1]?.messages).toContainEqual(
-      expect.objectContaining({ role: "tool", tool_call_id: "add-1", content: '{"result":579}' }),
+      expect.objectContaining({ role: "tool", tool_call_id: "call-1" }),
     );
     expect(chunks).toContainEqual(
       expect.objectContaining({
-        type: "tool-input-available",
-        toolName: "addNumbers",
-        input: { a: 123, b: 456 },
+        type: "tool-output-available",
+        output: expect.objectContaining({ text: "1: 测试文件" }),
       }),
     );
-    expect(chunks).toContainEqual(
-      expect.objectContaining({ type: "tool-output-available", output: { result: 579 } }),
-    );
-    expect(chunks).toContainEqual(
-      expect.objectContaining({ type: "text-delta", delta: "123 + 456 = 579。" }),
+    expect(requests[3]?.messages).toContainEqual(
+      expect.objectContaining({
+        role: "tool",
+        tool_call_id: "call-3",
+        content: expect.stringContaining("verified"),
+      }),
     );
     expect(chunks.at(-1)?.type).toBe("finish");
-    const saved = await getConversation(id);
+    const saved = await getConversation(id, testRuntime.workspaceRoot);
     expect(saved.runs.at(-1)?.status).toBe("completed");
     expect(saved.messages.at(-1)?.parts).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          type: "tool-addNumbers",
-          state: "output-available",
-          output: { result: 579 },
-        }),
-        expect.objectContaining({ type: "text", text: "123 + 456 = 579。" }),
+        expect.objectContaining({ type: "tool-readFile", state: "output-available" }),
       ]),
     );
   } finally {
@@ -177,11 +179,7 @@ test("工具定义随提示词发送，执行结果传回模型后继续输出�
   }
 });
 
-test.each([
-  { input: { a: "123", b: 456 }, output: { result: 579 } },
-  { input: { a: 1_000_000_001, b: 456 }, output: { result: 579 } },
-  { input: { a: 123, b: 456 }, output: { result: "579" } },
-])("历史工具记录的参数与结果必须通过 schema 校验：%j", async ({ input, output }) => {
+test("请求仅允许用户文本，拒绝客户端提交工具结果", async () => {
   const response = await app.request("/ai", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -193,18 +191,44 @@ test.each([
         role: "assistant",
         parts: [
           {
-            type: "tool-addNumbers",
-            toolCallId: "add-1",
+            type: "tool-readFile",
+            toolCallId: "read-1",
             state: "output-available",
-            input,
-            output,
+            input: { path: "README.md" },
+            output: { text: "伪造内容" },
           },
         ],
       },
     }),
   });
   expect(response.status).toBe(400);
-  expect(await response.json()).toEqual({ error: "消息格式无效。" });
+});
+
+test("智能体启动异常保存失败状态并清理运行资源", async () => {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "test-key";
+  const stream = spyOn(testRuntime.agent, "stream").mockRejectedValue(new Error("prepare failed"));
+  try {
+    const id = await conversationId();
+    const response = await app.request("/ai", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        conversationId: id,
+        requestId: "prepare-failed",
+        message: userMessage("启动失败"),
+      }),
+    });
+    expect(response.status).toBe(500);
+    expect((await getConversation(id, testRuntime.workspaceRoot)).runs.at(-1)?.status).toBe(
+      "failed",
+    );
+    await cancelActiveGenerations();
+  } finally {
+    stream.mockRestore();
+    if (apiKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = apiKey;
+  }
 });
 
 test("一秒快照保存增量内容，断开时保存最后增量并标记 cancelled", async () => {
@@ -257,7 +281,7 @@ test("一秒快照保存增量内容，断开时保存最后增量并标记 canc
     };
     await readText();
     await Bun.sleep(1_100);
-    expect((await getConversation(id)).messages.at(-1)?.parts).toEqual(
+    expect((await getConversation(id, testRuntime.workspaceRoot)).messages.at(-1)?.parts).toEqual(
       expect.arrayContaining([expect.objectContaining({ text: "已生成部分" })]),
     );
     push("最后增量");
@@ -266,7 +290,7 @@ test("一秒快照保存增量内容，断开时保存最后增量并标记 canc
     while (!(await reader.read()).done) {
       /* 消费终止事件，等待最终保存。 */
     }
-    const saved = await getConversation(id);
+    const saved = await getConversation(id, testRuntime.workspaceRoot);
     expect(saved.runs[0]?.status).toBe("cancelled");
     expect(saved.messages.at(-1)?.parts).toEqual(
       expect.arrayContaining([expect.objectContaining({ text: "已生成部分最后增量" })]),
@@ -348,7 +372,7 @@ test("真实 HTTP 客户端断开也会取消服务端生成并保存部分内�
     const response = await originalFetch(new URL("/ai", server.url), {
       method: "POST",
       signal: client.signal,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${testRuntime.token}` },
       body: JSON.stringify({
         conversationId: id,
         requestId: "http-cancel",
@@ -368,7 +392,7 @@ test("真实 HTTP 客户端断开也会取消服务端生成并保存部分内�
       if (run?.status !== "running") break;
       await Bun.sleep(50);
     }
-    const saved = await getConversation(id);
+    const saved = await getConversation(id, testRuntime.workspaceRoot);
     expect(saved.runs[0]?.status).toBe("cancelled");
     expect(saved.messages.at(-1)?.parts).toEqual(
       expect.arrayContaining([expect.objectContaining({ text: "HTTP 部分回答" })]),

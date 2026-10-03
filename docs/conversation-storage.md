@@ -2,11 +2,13 @@
 
 数据库连接、Prisma schema、迁移及生成的客户端都由 `apps/server` 持有。CLI 只依赖
 Hono RPC 的类型和 HTTP API，不访问数据库，也不持有数据库凭据。当前没有其他直连数据库的
-应用，因此不创建共享数据库包。
+应用，因此不创建共享数据库包。两端使用 `packages/contracts/src/conversation.ts` 的会话契约；
+Agent 和容器工具位于 `packages/agent`，会话事务及生成编排位于
+`apps/server/src/features/conversations`，模型供应商配置位于 `apps/server/src/providers`。
 
 | 表 | 作用 | 关键字段与约束 |
 | --- | --- | --- |
-| `conversations` | 区分线性对话 | UUID、标题、最后活动时间、事务内分配的消息序号 |
+| `conversations` | 区分线性对话 | UUID、可空的 workspace_root、标题、最后活动时间、事务内分配的消息序号 |
 | `messages` | 保存用户和 AI 消息 | 消息 ID、对话 ID、序号、角色、完整 UIMessage `parts` JSONB、metadata、schema_version |
 | `generation_runs` | 记录一次服务端生成 | 请求 ID、输入/输出消息 ID、模型、状态、错误、用量、结束原因、心跳和起止时间 |
 
@@ -31,8 +33,8 @@ PostgreSQL 部分唯一索引另外保证同一对话最多一个 `running` run�
 正常完成或取消时，等待所有快照写入，再事务保存最终消息和状态。数据库快照写入失败会
 停止生成。强制杀进程时允许丢失最后约一秒内容；这是数据库正常可用时的目标，并非实时保证。
 
-失去心跳超过 90 秒的 `running` run，在读取历史或提交下一条消息时回收为 `interrupted`。
-该余量大于模型的 60 秒生成超时，避免误回收其他服务进程的正常请求。服务端收到 SIGINT
+失去心跳超过 210 秒的 `running` run，在读取历史或提交下一条消息时回收为 `interrupted`。
+该余量大于模型的 180 秒生成超时，避免误回收其他服务进程的正常请求。服务端收到 SIGINT
 或 SIGTERM 时取消活动生成、等待最终保存，然后关闭连接池。
 
 本地 Compose 使用 PostgreSQL 18、命名卷和仅监听 `127.0.0.1:54324` 的端口。`db:down`
@@ -40,4 +42,10 @@ PostgreSQL 部分唯一索引另外保证同一对话最多一个 `running` run�
 删除自己创建的对话，不清空开发库。自定义 `TEST_DATABASE_URL` 的数据库须提前创建且名称
 以 `_test` 结尾。
 
-当前历史入口展示最近 50 条对话。尚未接入用户、鉴权、消息编辑或对话分支。
+当前历史入口展示当前工作区最近 50 条对话，本地访问由每次 CLI 启动的随机令牌鉴权。
+工作区由可信启动参数固定，HTTP 输入不能改变它；对话读取和生成事务都校验工作区。
+旧 workspace_root 为 NULL 的对话保留，不自动绑定。SDK 将已移除工具的终态历史转换成 dynamic-tool，
+无需删除旧工具记录。尚未接入多用户、消息编辑或对话分支。
+
+模型实例与生成记录的 provider/model 来自同一份供应商身份配置，由运行时传给会话存储。
+180 秒生成超时和 210 秒失联回收阈值在会话功能的 `timing.ts` 中共同维护。

@@ -24,13 +24,14 @@ enum GenerationStatus {
 model Conversation {
   id             String          @id @default(uuid()) @db.Uuid
   title          String?
+  workspaceRoot  String?        @map("workspace_root")
   nextMessageSeq Int             @default(0) @map("next_message_seq")
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   lastActivityAt DateTime        @default(now()) @map("last_activity_at") @db.Timestamptz(3)
   messages       Message[]
   runs           GenerationRun[]
 
-  @@index([lastActivityAt, id])
+  @@index([workspaceRoot, lastActivityAt, id])
   @@map("conversations")
 }
 

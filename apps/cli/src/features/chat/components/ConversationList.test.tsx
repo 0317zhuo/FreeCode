@@ -14,13 +14,13 @@ afterEach(() => {
   testSetup = undefined;
 });
 
-test("加法工具逐步显示准备、等待、完成与失败状态，并能查看输入输出", async () => {
+test("读取工具逐步显示准备、等待、完成与失败状态，并能查看输入输出", async () => {
   let update: (part: ToolUIPart) => void = () => {};
   const initial: ToolUIPart = {
-    type: "tool-addNumbers",
+    type: "tool-readFile",
     toolCallId: "add-1",
     state: "input-streaming",
-    input: { a: 123 },
+    input: { path: "README" },
   };
   function Conversation() {
     const [part, setPart] = useState(initial);
@@ -44,28 +44,27 @@ test("加法工具逐步显示准备、等待、完成与失败状态，并能�
 
   testSetup = await testRender(<Conversation />, { width: 80, height: 20, kittyKeyboard: true });
   await testSetup.flush();
-  expect(testSetup.captureCharFrame()).toContain("[工具: addNumbers] 准备参数");
+  expect(testSetup.captureCharFrame()).toContain("[工具: readFile] 准备参数");
 
-  const input = { a: 123, b: 456 };
+  const input = { path: "README.md" };
   act(() => update({ ...initial, state: "input-available", input }));
   await testSetup.flush();
-  expect(testSetup.captureCharFrame()).toContain("[工具: addNumbers] 等待结果");
+  expect(testSetup.captureCharFrame()).toContain("[工具: readFile] 等待结果");
 
-  act(() => update({ ...initial, state: "output-available", input, output: { result: 579 } }));
+  act(() => update({ ...initial, state: "output-available", input, output: { text: "测试内容" } }));
   await testSetup.flush();
-  expect(testSetup.captureCharFrame()).toContain("[工具: addNumbers] 已完成");
+  expect(testSetup.captureCharFrame()).toContain("[工具: readFile] 已完成");
   act(() => testSetup?.mockInput.pressTab());
   await testSetup.flush();
   act(() => testSetup?.mockInput.pressEnter());
   await testSetup.flush();
   const frame = testSetup.captureCharFrame();
-  expect(frame).toContain('"a": 123');
-  expect(frame).toContain('"b": 456');
-  expect(frame).toContain('"result": 579');
+  expect(frame).toContain('"path": "README.md"');
+  expect(frame).toContain('"text": "测试内容"');
 
   act(() => update({ ...initial, state: "output-error", input, errorText: "工具执行失败" }));
   await testSetup.flush();
-  expect(testSetup.captureCharFrame()).toContain("[工具: addNumbers] 失败");
+  expect(testSetup.captureCharFrame()).toContain("[工具: readFile] 失败");
   expect(testSetup.captureCharFrame()).toContain("错误 · 工具执行失败");
 });
 

@@ -24,7 +24,9 @@
     "dotenv": "18.0.5",
     "hono": "4.13.10",
     "pg": "8.22.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@freecode/agent": "workspace:*",
+    "@freecode/contracts": "workspace:*"
   },
   "devDependencies": {
     "@hono/cli": "0.2.0-next.9",

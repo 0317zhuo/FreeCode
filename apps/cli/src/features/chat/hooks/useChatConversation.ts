@@ -1,37 +1,12 @@
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
 import { useEffect, useRef, useState } from "react";
-import { rpc } from "../../../lib/rpc";
-import { readConversation, type SavedConversation } from "../conversationApi";
-
-class CheckedChatTransport extends DefaultChatTransport<UIMessage> {
-  protected override processResponseStream(stream: ReadableStream<Uint8Array>) {
-    let finished = false;
-    return super.processResponseStream(stream).pipeThrough(
-      new TransformStream({
-        transform(chunk, controller) {
-          if (chunk.type === "abort") throw new Error("生成已中止或超时，请重试。");
-          if (chunk.type === "finish") finished = true;
-          controller.enqueue(chunk);
-        },
-        flush() {
-          if (!finished) throw new Error("响应流意外结束，请重试。");
-        },
-      }),
-    );
-  }
-}
-
-const transport = new CheckedChatTransport({
-  api: rpc.ai.$url().href,
-  prepareSendMessagesRequest({ id, messages }) {
-    const message = messages.at(-1);
-    return { body: { conversationId: id, requestId: message?.id, message } };
-  },
-});
+import { readConversation, type SavedConversation } from "../../../lib/conversationApi";
+import { rpc, serverHeaders } from "../../../lib/rpc";
+import { createChatTransport } from "../transport";
 
 /** 管理一次聊天会话的流式消息；进入页面时自动发送首页传入的提示词。 */
 export function useChatConversation(conversation: SavedConversation, prompt?: string) {
+  const [transport] = useState(() => createChatTransport(rpc.ai.$url().href, () => serverHeaders));
   const [runs, setRuns] = useState(conversation.runs);
   const [syncError, setSyncError] = useState<Error>();
   const loadController = useRef<AbortController | null>(null);

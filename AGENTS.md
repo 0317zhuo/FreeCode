@@ -8,7 +8,11 @@
 - `apps/cli/src/index.tsx` 管理渲染器、热重载与退出清理；CLI 源码按三层组织：`src/app/` 放应用外壳与路由，`src/features/<feature>/` 放页面、专属组件与专属 hook，`src/lib/` 放跨功能共享的 schema、客户端、配色和按键契约。依赖方向单向：`features/*` 可依赖 `lib/`，`lib/` 不依赖任何 feature，feature 之间不互相引用。
 - 根目录的 `tsconfig.base.json`、`biome.json`、`.editorconfig` 提供公共规则；`bun.lock` 是唯一锁文件。
 
-当前没有共享包、独立测试目录或静态资源目录；仅在实际需要时新增。测试文件与源码相邻存放，不单独建目录。
+共享能力位于 `packages/agent`，两端的会话契约位于 `packages/contracts`。Agent 根入口只导出纯工具契约，`/server` 提供 Agent 工厂，`/sandbox` 提供容器执行器；包不得反向依赖 `apps/`。每个工具的 `schema.ts` 与容器内 `runtime.ts` 放在同一工具目录，分别在 `tools/schemas.ts`、`tools/runners.ts` 和 SDK 适配处注册。
+
+服务端 `src/runtime.ts` 组合工作区、鉴权、供应商配置与 Agent；`src/providers/` 持有模型身份、密钥检查和供应商错误映射。会话存储与生成编排位于 `features/conversations/`，HTTP 响应仍由路由负责。CLI 的跨功能会话请求位于 `lib/conversationApi.ts`，聊天传输协议位于 `features/chat/transport.ts`。
+
+当前没有独立测试目录或静态资源目录；仅在实际需要时新增。测试文件与源码相邻存放，不单独建目录。
 
 ## 安装、开发与检查命令
 
@@ -73,7 +77,7 @@ CLI 的 JSX 设置仅放在 `apps/cli/tsconfig.json`，保留 `@opentui/react` J
 
 自动化测试使用 `bun:test`，命名为 `*.test.ts` 或 `*.test.tsx` 并与源码相邻，从根目录运行 `bun run test`（已接入 `bun run check`）。服务测试导入 `app.ts`，避免启动监听；CLI 交互测试使用 `@opentui/react/test-utils` 的 `testRender`，用模拟按键覆盖提交、修饰键和退出等行为，不依赖真实模型调用。当前没有覆盖率门槛。
 
-提交前运行 `bun run check`。服务变更验证相关路由及 `/health`；CLI 变更在交互式终端验证显示、热重载和 `Q`、`Esc`、`Ctrl+C` 退出后的终端恢复。CLI 连接的服务端地址用 `FREECODE_SERVER_URL` 覆盖，默认 `http://localhost:3000`。聊天接口仅调用真实模型；推理与工具调用的渲染通过自动化测试中的模拟消息验证。
+提交前运行 `bun run check`。服务变更验证相关路由及 `/health`；CLI 变更在交互式终端验证显示、热重载和 `Q`、`Esc`、`Ctrl+C` 退出后的终端恢复。CLI 自动启动仅监听 `127.0.0.1` 随机端口的本地后端，通过每次启动的令牌访问；`FREECODE_SERVER_URL` 不用于代理启动。聊天接口仅调用真实模型；推理与工具调用的渲染通过自动化测试中的模拟消息验证。
 
 ## 提交与 Pull Request
 
@@ -83,6 +87,6 @@ PR 说明问题、改动与验证命令及结果，关联适用的 issue。终�
 
 ## 配置与协作约定
 
-服务端口通过 `PORT` 设置，例如 `PORT=4000 bun run dev:server`。本地配置使用 `apps/server/.env`；仅提交 `.env.example`，不要提交凭据、依赖目录或生成产物。可复现安装使用 `bun install --frozen-lockfile`。
+本地后端端口由 CLI 启动时自动分配，工作区和令牌由可信启动入口注入。配置在服务端监听入口从 `apps/server/.env` 加载，公共包和数据库模块导入时不加载配置；仅提交 `.env.example`，不要提交凭据、依赖目录或生成产物。可复现安装使用 `bun install --frozen-lockfile`。
 
 沟通与说明使用简体中文。仅修改任务所需内容，遵循现有风格，不顺带重构；清理本次改动产生的未使用代码。

@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { z } from "zod";
+import { createConversation } from "../../../lib/conversationApi";
 import { promptSchema } from "../../../lib/promptSchema";
-import { rpc } from "../../../lib/rpc";
-
-const createdConversationSchema = z.object({ id: z.uuid() });
 
 /** 首页提交时创建对话；成功后交给路由打开，离开首页时取消请求。 */
 export function useStartConversation(onCreated: (id: string, prompt: string) => void) {
@@ -21,11 +18,7 @@ export function useStartConversation(onCreated: (id: string, prompt: string) => 
     setWaiting(true);
     setError(undefined);
     try {
-      const response = await rpc.conversations.$post(undefined, {
-        init: { signal: controller.signal },
-      });
-      if (!response.ok) throw new Error("对话创建失败，请检查服务端数据库后重试。");
-      const conversation = createdConversationSchema.parse(await response.json());
+      const conversation = await createConversation(controller.signal);
       if (!controller.signal.aborted) onCreated(conversation.id, result.data);
     } catch (error: unknown) {
       if (!controller.signal.aborted)

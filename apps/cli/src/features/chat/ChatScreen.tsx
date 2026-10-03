@@ -1,10 +1,10 @@
+import type { SavedConversation } from "../../lib/conversationApi";
 import { theme } from "../../lib/theme";
 import { deriveChatActivity, isChatBusy } from "./chatActivity";
 import { getDetailIds } from "./chatParts";
 import { ChatComposer } from "./components/ChatComposer";
 import { ChatStatus } from "./components/ChatStatus";
 import { ConversationList } from "./components/ConversationList";
-import type { SavedConversation } from "./conversationApi";
 import { useChatConversation } from "./hooks/useChatConversation";
 import { useChatDetailNavigation } from "./hooks/useChatDetailNavigation";
 import { useConversation } from "./hooks/useConversation";

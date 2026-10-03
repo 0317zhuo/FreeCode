@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { readConversation, type SavedConversation } from "../conversationApi";
+import { readConversation, type SavedConversation } from "../../../lib/conversationApi";
 
 /** 加载指定的持久化对话，再允许发送消息；离开时取消加载。 */
 export function useConversation(id: string) {

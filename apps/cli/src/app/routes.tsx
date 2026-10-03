@@ -1,5 +1,5 @@
+import { conversationReferenceSchema } from "@freecode/contracts";
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import { z } from "zod";
 import { ChatScreen } from "../features/chat/ChatScreen";
 import { HistoryScreen } from "../features/chat/HistoryScreen";
 import { HomeScreen } from "../features/home/HomeScreen";
@@ -28,7 +28,7 @@ function HomeRoute() {
 function ChatRoute() {
   const navigate = useNavigate();
   const location = useLocation();
-  const result = z.object({ id: z.uuid() }).safeParse(useParams());
+  const result = conversationReferenceSchema.safeParse(useParams());
   const prompt = promptRouteStateSchema.safeParse(location.state);
   if (!result.success) return <Navigate to="/" replace />;
   return (

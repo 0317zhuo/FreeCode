@@ -8,7 +8,8 @@
     "bun": ">=1.4.2"
   },
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "db:up": "bun scripts/database.ts up",
@@ -16,9 +17,9 @@
     "db:generate": "bun run --cwd apps/server db:generate",
     "db:migrate": "bun run --cwd apps/server db:migrate",
     "dev:server": "bun run --cwd apps/server dev",
-    "dev:cli": "bun run --cwd apps/cli dev",
+    "dev:cli": "bun --no-env-file --watch --no-clear-screen apps/cli/src/index.tsx",
     "start:server": "bun run --cwd apps/server start",
-    "start:cli": "bun run --cwd apps/cli start",
+    "start:cli": "bun --no-env-file apps/cli/src/index.tsx",
     "typecheck": "bun run --workspaces --sequential typecheck",
     "test": "bun scripts/test.ts",
     "lint": "bun run --bun biome check .",

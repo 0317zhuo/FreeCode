@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch --no-clear-screen src/index.tsx",
-    "start": "bun src/index.tsx",
+    "dev": "bun --no-env-file --watch --no-clear-screen src/index.tsx",
+    "start": "bun --no-env-file src/index.tsx",
     "typecheck": "bun run --bun tsc --noEmit"
   },
   "dependencies": {
@@ -16,7 +16,8 @@
     "hono": "4.13.10",
     "react": "19.3.0",
     "react-router": "^8.4.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@freecode/contracts": "workspace:*"
   },
   "devDependencies": {
     "@freecode/server": "workspace:*",

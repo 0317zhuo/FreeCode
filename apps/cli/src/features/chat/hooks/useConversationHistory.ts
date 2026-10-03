@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { readConversations } from "../conversationApi";
+import { readConversations } from "../../../lib/conversationApi";
 
 export function useConversationHistory() {
   const [items, setItems] = useState<Awaited<ReturnType<typeof readConversations>>>();

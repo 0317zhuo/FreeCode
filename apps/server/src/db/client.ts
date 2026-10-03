@@ -1,9 +1,6 @@
-import { resolve } from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { config } from "dotenv";
 import { PrismaClient } from "../generated/prisma/client";
 
-config({ path: resolve(import.meta.dir, "../../.env"), quiet: true });
 const shared = globalThis as typeof globalThis & { freecodeDb?: PrismaClient };
 
 /** 热重载复用连接池；CLI 不直接依赖此模块。 */
